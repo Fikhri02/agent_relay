@@ -21,6 +21,7 @@ class DeliveryWorker {
     required this.messages,
     required this.notifier,
     required this.onUnpaired,
+    this.onDraftsExpired,
     this.keepAlive,
     int Function()? nowMs,
   }) : _now = nowMs ?? (() => DateTime.now().millisecondsSinceEpoch);
@@ -37,6 +38,10 @@ class DeliveryWorker {
 
   /// The other Mac answered `untrusted`: it unpaired while we were away.
   final Future<void> Function(String deviceId) onUnpaired;
+
+  /// The drafts a pass just expired (status already `expired`), so an
+  /// unapproved surat creation can remove its surat.
+  final Future<void> Function(List<Message> expired)? onDraftsExpired;
   final int Function() _now;
   final _skewNoticeSent = <String>{};
   Timer? _timer;
@@ -48,7 +53,19 @@ class DeliveryWorker {
     _timer = Timer.periodic(tick, (_) => runOnce());
   }
 
-  void stop() => _timer?.cancel();
+  /// Stops the timer and waits out a pass already running, so the database
+  /// can be closed after this returns.
+  Future<void> stop() async {
+    _timer?.cancel();
+    _timer = null;
+    while (_current != null) {
+      try {
+        await _current;
+      } on Object {
+        // The pass's own caller sees its error; stopping goes on.
+      }
+    }
+  }
 
   /// A peer was just seen (mDNS or an inbound request): retry it now.
   Future<void> peerSeen(String deviceId) async {
@@ -135,13 +152,15 @@ class DeliveryWorker {
 
   Future<void> _expireDrafts() async {
     final cutoff = _now() - draftLifetimeMs;
-    await (db.update(db.messages)..where(
-          (m) =>
-              m.direction.equals('out') &
-              m.status.equals('awaiting_approval') &
-              m.createdAt.isSmallerThanValue(cutoff),
-        ))
-        .write(const MessagesCompanion(status: Value('expired')));
+    final expired =
+        await (db.update(db.messages)..where(
+              (m) =>
+                  m.direction.equals('out') &
+                  m.status.equals('awaiting_approval') &
+                  m.createdAt.isSmallerThanValue(cutoff),
+            ))
+            .writeReturning(const MessagesCompanion(status: Value('expired')));
+    if (expired.isNotEmpty) await onDraftsExpired?.call(expired);
   }
 
   /// Pings idle paired peers, without holding up deliveries.

@@ -85,6 +85,17 @@ class MessageService {
   Stream<Message> get incoming => _incoming.stream;
   Stream<Message> get changes => _changes.stream;
 
+  /// Publishes an approved `kind == 'event'` draft (the surat service). Set
+  /// by the node; [approve] calls it instead of sealing a message.
+  Future<void> Function(Message draft)? publishEvent;
+
+  /// Told when an event draft is discarded or expires, so a surat that was
+  /// never created can be removed.
+  Future<void> Function(Message draft)? dropEvent;
+
+  /// Announces a row written elsewhere (an event draft) on [changes].
+  void announce(Message m) => _changes.add(m);
+
   Future<Message> _get(String id) =>
       (db.select(db.messages)..where((m) => m.id.equals(id))).getSingle();
 
@@ -155,6 +166,13 @@ class MessageService {
         await (db.update(db.messages)..where((x) => x.id.equals(m.id))).write(
           const MessagesCompanion(status: Value('expired')),
         );
+        if (m.kind == 'event') await dropEvent?.call(m);
+        return true;
+      }
+      if (m.kind == 'event') {
+        final publish = publishEvent;
+        if (publish == null) throw StateError('no surat service for events');
+        await publish(m);
         return true;
       }
       final hlc = clock.tick().encode();
@@ -215,6 +233,7 @@ class MessageService {
     await (db.update(db.messages)..where((x) => x.id.equals(messageId))).write(
       const MessagesCompanion(status: Value('discarded')),
     );
+    if (m.kind == 'event') await dropEvent?.call(m);
     _changes.add(await _get(messageId));
   }
 

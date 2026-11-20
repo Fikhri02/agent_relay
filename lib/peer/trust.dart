@@ -84,13 +84,24 @@ Future<void> addOrRefreshContact(
   );
 }
 
-/// Deletes `surat_contact` peers that share no open surat with me.
+/// Deletes `surat_contact` peers that share no open surat with me. A contact
+/// with a delivery still queued (the leave or last event that ended our
+/// shared surat) is kept until a later call, so that event can reach it.
 Future<void> forgetLoneContacts(RelayDatabase db, String myDeviceId) async {
   final contacts = await (db.select(
     db.peers,
   )..where((p) => p.trust.equals(trustSuratContact))).get();
   for (final c in contacts) {
-    if (!await sharesSurat(db, myDeviceId, c.deviceId)) {
+    final waiting =
+        await (db.select(db.deliveries)
+              ..where(
+                (d) =>
+                    d.recipientDeviceId.equals(c.deviceId) &
+                    d.status.equals('queued'),
+              )
+              ..limit(1))
+            .get();
+    if (waiting.isEmpty && !await sharesSurat(db, myDeviceId, c.deviceId)) {
       await (db.delete(
         db.peers,
       )..where((p) => p.deviceId.equals(c.deviceId))).go();

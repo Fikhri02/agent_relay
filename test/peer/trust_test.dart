@@ -132,4 +132,27 @@ void main() {
       expect(ids, contains(deviceIdFor(paired.signPub, paired.boxPub)));
     },
   );
+
+  test('a lone contact with a queued delivery is kept until it goes', () async {
+    await addOrRefreshContact(db, cardOf(tommy), nowMs: 1);
+    await db
+        .into(db.deliveries)
+        .insert(
+          DeliveriesCompanion.insert(
+            messageId: 'leave-1',
+            recipientDeviceId: tommyId,
+            envelopeJson: '{}',
+            status: 'queued',
+            nextAttemptAt: 1,
+            createdAt: 1,
+          ),
+        );
+    await forgetLoneContacts(db, me);
+    expect(await db.select(db.peers).get(), hasLength(1));
+    await db
+        .update(db.deliveries)
+        .write(const DeliveriesCompanion(status: Value('delivered')));
+    await forgetLoneContacts(db, me);
+    expect(await db.select(db.peers).get(), isEmpty);
+  });
 }

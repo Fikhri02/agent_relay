@@ -18,6 +18,7 @@ import '../pairing/pairing_window.dart';
 import '../peer/peer_client.dart';
 import '../peer/peer_server.dart';
 import '../peer/server_bootstrap.dart';
+import '../surat/surat_service.dart';
 import 'notifier.dart';
 
 /// One running Agent Relay: database, identity, peer server, local API,
@@ -45,6 +46,7 @@ class RelayNode {
   LocalIdentity? identity;
   late PairingService pairing;
   late MessageService messages;
+  late SuratService surat;
   late DeliveryWorker worker;
   late LocalServer local;
   late ServerBootstrap _peerServer;
@@ -128,12 +130,28 @@ class RelayNode {
       myBox: me.keys.box,
       clock: clock,
     );
+    surat = SuratService(
+      db: db,
+      messages: messages,
+      keys: me.keys,
+      me: me,
+      clock: clock,
+      myPort: () => peerPort,
+    );
+    messages
+      ..publishEvent = surat.publish
+      ..dropEvent = surat.dropDraft;
     worker = DeliveryWorker(
       db: db,
       transport: client,
       messages: messages,
       notifier: notifier,
       onUnpaired: pairing.markUnpaired,
+      onDraftsExpired: (expired) async {
+        for (final d in expired) {
+          await surat.dropDraft(d);
+        }
+      },
       keepAlive: const Duration(seconds: 60),
     );
     await _peerServer.start(
@@ -174,7 +192,7 @@ class RelayNode {
 
   Future<void> stop() async {
     if (identity != null) {
-      worker.stop();
+      await worker.stop();
       await discovery?.stop();
       await local.stop();
       await _peerServer.stop();

@@ -265,6 +265,29 @@ void main() {
     expect((await message(fresh.id)).status, 'sent');
   });
 
+  test('expired drafts are reported to onDraftsExpired once', () async {
+    final expired = <List<String>>[];
+    final w = DeliveryWorker(
+      db: db,
+      transport: net,
+      messages: svc,
+      notifier: notes,
+      nowMs: () => now,
+      onUnpaired: (_) async {},
+      onDraftsExpired: (list) async =>
+          expired.add([for (final m in list) '${m.id}:${m.status}']),
+    );
+    final stale = await svc.draft(channelId: ch, body: 'old');
+    now += 60 * 60 * 1000 + 1;
+    final fresh = await svc.draft(channelId: ch, body: 'new');
+    await w.runOnce();
+    await w.runOnce();
+    expect(expired, [
+      ['${stale.id}:expired'],
+    ]);
+    expect((await message(fresh.id)).status, 'awaiting_approval');
+  });
+
   test(
     'state survives a restart: a new worker on the same db sends queued items',
     () async {
