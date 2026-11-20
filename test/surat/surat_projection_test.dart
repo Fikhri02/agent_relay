@@ -48,11 +48,7 @@ void main() {
         suratId,
         from: bob,
         hlc: Hlc(now, 0).encode(),
-        event: InviteEvent(
-          newcomer: named('Eve'),
-          vouch: 'v',
-          snapshot: null,
-        ),
+        event: InviteEvent(newcomer: named('Eve'), vouch: 'v', snapshot: null),
       );
       now += 1000;
       await alice.storeIncoming(

@@ -61,3 +61,18 @@ class BecameMutual extends SuratChange {
   const BecameMutual(super.suratId, this.deviceId);
   final String deviceId;
 }
+
+/// I already approved this newcomer; an approval cannot be taken back.
+class AlreadyApproved implements Exception {
+  const AlreadyApproved();
+  @override
+  String toString() => 'already approved';
+}
+
+/// No pending decision has this id (it was decided, or its surat is gone).
+class UnknownPending implements Exception {
+  const UnknownPending(this.id);
+  final String id;
+  @override
+  String toString() => 'no such pending decision: $id';
+}

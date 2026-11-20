@@ -15,11 +15,13 @@ import '../ordering/hlc.dart';
 import '../peer/trust.dart';
 import 'surat_change.dart';
 import 'surat_event.dart';
+import 'surat_pending.dart';
 import 'surat_projection.dart';
 import 'surat_receiver.dart';
 import 'surat_state.dart';
 
 export 'surat_change.dart';
+export 'surat_pending.dart' show PendingItem;
 
 /// The peer route membership events travel on.
 const eventPath = '/relay/event';
@@ -63,6 +65,21 @@ class SuratService {
     nowMs: _now,
     project: _projectInTransaction,
   );
+
+  late final _pending = SuratPending(
+    db: db,
+    me: me,
+    publish: publish,
+    nowMs: _now,
+  );
+
+  /// Invites to me and newcomers waiting for my approval.
+  Future<List<PendingItem>> pending() => _pending.pending();
+
+  /// Accept or decline an invite, or approve or decline a newcomer, and
+  /// publish it at once (see [SuratPending.decide]).
+  Future<void> decide(String pendingId, {required bool approve}) =>
+      _pending.decide(pendingId, approve: approve);
 
   Stream<SuratChange> get changes => _changes.stream;
 
