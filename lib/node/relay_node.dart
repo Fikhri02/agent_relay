@@ -168,6 +168,7 @@ class RelayNode {
       config: config,
       db: db,
       messages: messages,
+      surat: surat,
       me: (
         deviceId: me.deviceId,
         personName: me.personName,

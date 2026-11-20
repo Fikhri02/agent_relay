@@ -88,9 +88,11 @@ class RelayDatabase extends _$RelayDatabase {
   );
 
   /// Incoming, readable, and not yet read by [by]: `seenAt` for the person,
-  /// `agentReadAt` for the agent. Locked messages never count as unread.
+  /// `agentReadAt` for the agent. Locked messages and event rows never count
+  /// as unread.
   Expression<bool> _unreadBy(Reader by) =>
       messages.direction.equals('in') &
+      messages.kind.equals('event').not() &
       messages.status.equals('locked').not() &
       (by == Reader.agent
           ? messages.agentReadAt.isNull()

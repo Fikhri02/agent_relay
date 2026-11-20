@@ -4,10 +4,12 @@ import 'dart:io';
 import 'package:agent_relay/config/app_config.dart';
 import 'package:agent_relay/crypto/identity_keys.dart';
 import 'package:agent_relay/data/relay_database.dart';
+import 'package:agent_relay/identity/local_identity.dart';
 import 'package:agent_relay/local_api/local_server.dart';
 import 'package:agent_relay/messaging/envelope.dart';
 import 'package:agent_relay/messaging/message_service.dart';
 import 'package:agent_relay/ordering/hlc.dart';
+import 'package:agent_relay/surat/surat_service.dart';
 import 'package:drift/drift.dart' hide isNull, isNotNull;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shelf/shelf.dart';
@@ -18,6 +20,7 @@ void main() {
   late Directory dir;
   late RelayDatabase db;
   late MessageService svc;
+  late SuratService surat;
   late LocalServer server;
   late String token;
   late String xavierId;
@@ -65,6 +68,26 @@ void main() {
       clock: HlcClock(nowMs: () => now),
       nowMs: () => now,
     );
+    final identity = LocalIdentity(
+      deviceId: myId,
+      personName: 'Irfan',
+      deviceName: 'MacBook Pro',
+      keys: me,
+      certPath: '',
+      keyPath: '',
+      certFingerprint: 'fp-me',
+    );
+    surat = SuratService(
+      db: db,
+      messages: svc,
+      keys: me,
+      me: identity,
+      clock: HlcClock(nowMs: () => now),
+      nowMs: () => now,
+    );
+    svc
+      ..publishEvent = surat.publish
+      ..dropEvent = surat.dropDraft;
     server = LocalServer(
       config: AppConfig(
         dataDir: dir,
@@ -74,6 +97,7 @@ void main() {
       ),
       db: db,
       messages: svc,
+      surat: surat,
       me: (deviceId: myId, personName: 'Irfan', deviceName: 'MacBook Pro'),
       nowMs: () => now,
     );
@@ -350,6 +374,7 @@ void main() {
         ),
         db: db,
         messages: svc,
+        surat: surat,
         me: (deviceId: myId, personName: 'Irfan', deviceName: 'MacBook Pro'),
         deliverNow: deliverNow,
         deliverWait: const Duration(milliseconds: 200),
@@ -390,5 +415,675 @@ void main() {
       await useServer(() => Future.delayed(const Duration(seconds: 5)));
       expect((await approveOne())['status'], 'queued');
     });
+  });
+
+  group('surat', () {
+    Matcher res(int status, Object body) => isA<(int, dynamic)>()
+        .having((r) => r.$1, 'status', status)
+        .having((r) => r.$2, 'body', body);
+
+    Future<(String, IdentityKeys)> pairedPeer(String name) async {
+      final k = await IdentityKeys.generate();
+      await insertPeer(db, k, name: name, fingerprint: 'fp-$name');
+      return (deviceIdFor(k.signPub, k.boxPub), k);
+    }
+
+    Future<String> suratRow({
+      required String id,
+      String creator = '',
+      String? name = 'Release',
+      int? closedAt,
+      required Map<String, ChannelMembersCompanion Function(String id)> rows,
+    }) async {
+      await db
+          .into(db.channels)
+          .insert(
+            ChannelsCompanion.insert(
+              id: id,
+              kind: 'surat',
+              name: Value(name),
+              createdAt: 1,
+              closedAt: Value(closedAt),
+              creatorDeviceId: Value(creator.isEmpty ? myId : creator),
+            ),
+          );
+      for (final e in rows.entries) {
+        await db.into(db.channelMembers).insert(e.value(e.key));
+      }
+      return id;
+    }
+
+    ChannelMembersCompanion Function(String) row(
+      String surat,
+      String joined, {
+      String state = 'member',
+      String? inviter,
+      String? mine,
+      String? theirs,
+      String? person,
+      String? device,
+    }) =>
+        (id) => ChannelMembersCompanion.insert(
+          channelId: surat,
+          deviceId: id,
+          joinedHlc: joined,
+          state: Value(state),
+          inviterDeviceId: Value(inviter),
+          myApproval: Value(mine),
+          theirApproval: Value(theirs),
+          personName: Value(person),
+          deviceName: Value(device),
+        );
+
+    /// Creates a surat through the API and approves it, so it is published.
+    Future<String> publishedSurat(List<String> invite) async {
+      final (_, c) = await call(
+        'POST',
+        '/surat',
+        body: {'name': 'Release', 'invite': invite},
+      );
+      expect((await call('POST', '/outbox/${c['id']}/approve')).$1, 200);
+      return c['suratId'] as String;
+    }
+
+    test('POST /surat drafts the creation', () async {
+      final (s, b) = await call(
+        'POST',
+        '/surat',
+        body: {
+          'name': ' Release ',
+          'invite': [xavierId],
+        },
+      );
+      expect(s, 201);
+      expect(b['status'], 'awaiting_approval');
+      final draft = await (db.select(
+        db.messages,
+      )..where((m) => m.id.equals(b['id']))).getSingle();
+      expect(draft.channelId, b['suratId']);
+      expect(draft.kind, 'event');
+      final channel = await (db.select(
+        db.channels,
+      )..where((c) => c.id.equals(b['suratId']))).getSingle();
+      expect((channel.kind, channel.name), ('surat', 'Release'));
+    });
+
+    test('POST /surat errors', () async {
+      expect(
+        await call(
+          'POST',
+          '/surat',
+          body: {
+            'name': '  ',
+            'invite': [xavierId],
+          },
+        ),
+        res(400, {'error': 'empty_name'}),
+      );
+      expect(
+        await call(
+          'POST',
+          '/surat',
+          body: {
+            'name': 'x',
+            'invite': ['nope'],
+          },
+        ),
+        res(404, {'error': 'unknown_peer'}),
+      );
+      expect(
+        await call('POST', '/surat', body: {'name': 'x', 'invite': []}),
+        res(400, {'error': 'no_invitees'}),
+      );
+      expect((await call('POST', '/surat', body: {'name': 'x'})).$1, 400);
+      final five = [
+        xavierId,
+        for (var i = 0; i < 4; i++) (await pairedPeer('P$i')).$1,
+      ];
+      expect(
+        await call('POST', '/surat', body: {'name': 'x', 'invite': five}),
+        res(409, {'error': 'too_many_members'}),
+      );
+    });
+
+    test(
+      'invite, leave and rename draft events once the surat is published',
+      () async {
+        final (yara, _) = await pairedPeer('Yara');
+        final id = await publishedSurat([xavierId]);
+        final (s, b) = await call(
+          'POST',
+          '/surat/$id/invite',
+          body: {'deviceId': yara},
+        );
+        expect((s, b['status']), (201, 'awaiting_approval'));
+        expect(
+          (await call(
+            'POST',
+            '/surat/$id/rename',
+            body: {'name': 'Launch'},
+          )).$1,
+          201,
+        );
+        final (sl, bl) = await call('POST', '/surat/$id/leave');
+        expect((sl, bl['status']), (201, 'awaiting_approval'));
+        final outbox = (await call('GET', '/outbox')).$2 as List;
+        expect(outbox.map((d) => d['kind']), ['event', 'event', 'event']);
+        expect(outbox.map((d) => d['body']), [
+          'You invited Yara',
+          'You renamed the surat to Launch',
+          'You left',
+        ]);
+      },
+    );
+
+    test('invite errors', () async {
+      final id = await publishedSurat([xavierId]);
+      expect(
+        await call('POST', '/surat/$id/invite', body: {'deviceId': xavierId}),
+        res(403, {'error': 'not_allowed'}),
+      );
+      expect(
+        await call('POST', '/surat/$id/invite', body: {'deviceId': 'nope'}),
+        res(404, {'error': 'unknown_peer'}),
+      );
+      expect((await call('POST', '/surat/$id/invite', body: {})).$1, 400);
+      // Me + Xavier + three more invitees fill all five seats.
+      final (extra, _) = await pairedPeer('Extra');
+      for (final n in ['E1', 'E2', 'E3']) {
+        final (p, _) = await pairedPeer(n);
+        await db
+            .into(db.channelMembers)
+            .insert(
+              ChannelMembersCompanion.insert(
+                channelId: id,
+                deviceId: p,
+                joinedHlc: '0000000000001-00000',
+                state: const Value('invited'),
+              ),
+            );
+      }
+      expect(
+        await call('POST', '/surat/$id/invite', body: {'deviceId': extra}),
+        res(409, {'error': 'too_many_members'}),
+      );
+    });
+
+    test('draft routes: unknown, closed, not a member, unpublished', () async {
+      expect(
+        await call('POST', '/surat/nope/leave'),
+        res(404, {'error': 'unknown_channel'}),
+      );
+      expect(
+        await call('POST', '/surat/$ch/leave'),
+        res(404, {'error': 'unknown_channel'}),
+      );
+      await suratRow(
+        id: 'ended',
+        closedAt: 5,
+        rows: {myId: row('ended', '0000000000001-00000')},
+      );
+      expect(
+        await call('POST', '/surat/ended/leave'),
+        res(409, {'error': 'channel_closed'}),
+      );
+      await suratRow(
+        id: 'gone',
+        rows: {
+          myId: row('gone', '0000000000001-00000', state: 'left'),
+          xavierId: row('gone', '0000000000002-00000'),
+        },
+      );
+      expect(
+        await call('POST', '/surat/gone/leave'),
+        res(403, {'error': 'not_a_member'}),
+      );
+      // Before its create is published (R11) nothing may be drafted.
+      final (_, c) = await call(
+        'POST',
+        '/surat',
+        body: {
+          'name': 'Draft',
+          'invite': [xavierId],
+        },
+      );
+      expect(
+        await call('POST', '/surat/${c['suratId']}/leave'),
+        res(403, {'error': 'not_allowed'}),
+      );
+      expect(
+        await call(
+          'POST',
+          '/surat/${c['suratId']}/rename',
+          body: {'name': 'z'},
+        ),
+        res(403, {'error': 'not_allowed'}),
+      );
+    });
+
+    test('rename errors: empty name, and not the renamer', () async {
+      final id = await publishedSurat([xavierId]);
+      expect(
+        await call('POST', '/surat/$id/rename', body: {'name': ' '}),
+        res(400, {'error': 'empty_name'}),
+      );
+      await suratRow(
+        id: 'theirs',
+        creator: xavierId,
+        rows: {
+          myId: row('theirs', '0000000000002-00000'),
+          xavierId: row('theirs', '0000000000001-00000'),
+        },
+      );
+      expect(
+        await call('POST', '/surat/theirs/rename', body: {'name': 'Mine'}),
+        res(403, {'error': 'not_allowed'}),
+      );
+    });
+
+    test('GET /pending lists invites and newcomers', () async {
+      final (yara, _) = await pairedPeer('Yara');
+      await suratRow(
+        id: 's1',
+        name: 'Alpha',
+        creator: xavierId,
+        rows: {
+          myId: row(
+            's1',
+            '0000000000002-00000',
+            state: 'invited',
+            inviter: xavierId,
+          ),
+          xavierId: row(
+            's1',
+            '0000000000001-00000',
+            person: 'Xavier',
+            device: 'Mac',
+          ),
+        },
+      );
+      await suratRow(
+        id: 's2',
+        name: 'Beta',
+        rows: {
+          myId: row('s2', '0000000000001-00000'),
+          xavierId: row(
+            's2',
+            '0000000000002-00000',
+            mine: 'approved',
+            person: 'Xavier',
+            device: 'Mac',
+          ),
+          yara: row(
+            's2',
+            '0000000000003-00000',
+            state: 'invited',
+            inviter: xavierId,
+            person: 'Yara',
+            device: 'Air',
+          ),
+        },
+      );
+      final (s, list) = await call('GET', '/pending');
+      expect(s, 200);
+      expect(list, [
+        {
+          'id': 'invite:s1:$myId',
+          'kind': 'invite',
+          'suratId': 's1',
+          'suratName': 'Alpha',
+          'deviceId': myId,
+          'personName': 'Irfan',
+          'deviceName': 'MacBook Pro',
+          'inviterName': 'Xavier',
+          'declined': false,
+        },
+        {
+          'id': 'newcomer:s2:$yara',
+          'kind': 'newcomer',
+          'suratId': 's2',
+          'suratName': 'Beta',
+          'deviceId': yara,
+          'personName': 'Yara',
+          'deviceName': 'Air',
+          'inviterName': 'Xavier',
+          'declined': false,
+        },
+      ]);
+    });
+
+    test('approve and decline a pending id, URL-encoded or not', () async {
+      final (yara, _) = await pairedPeer('Yara');
+      await suratRow(
+        id: 's2',
+        rows: {
+          myId: row('s2', '0000000000001-00000'),
+          xavierId: row(
+            's2',
+            '0000000000002-00000',
+            mine: 'approved',
+            person: 'Xavier',
+            device: 'Mac',
+          ),
+          yara: row(
+            's2',
+            '0000000000003-00000',
+            state: 'invited',
+            inviter: xavierId,
+            person: 'Yara',
+            device: 'Air',
+          ),
+        },
+      );
+      final encoded = Uri.encodeComponent('newcomer:s2:$yara');
+      expect(encoded, contains('%3A'));
+      expect(
+        await call('POST', '/pending/$encoded/approve'),
+        res(200, {'ok': true}),
+      );
+      expect(
+        await call('POST', '/pending/newcomer:s2:$yara/approve'),
+        res(200, {'ok': true}),
+      );
+      final events = await (db.select(
+        db.messages,
+      )..where((m) => m.channelId.equals('s2') & m.kind.equals('event'))).get();
+      // The fixture has no event log, so nothing marks Yara approved and the
+      // second call publishes again; each carries my approval.
+      expect(events, isNotEmpty);
+      expect(
+        events.every((e) => e.body == '{"type":"approve","deviceId":"$yara"}'),
+        isTrue,
+      );
+    });
+
+    test('decline a newcomer; accept an invite', () async {
+      final (yara, _) = await pairedPeer('Yara');
+      await suratRow(
+        id: 's2',
+        rows: {
+          myId: row('s2', '0000000000001-00000'),
+          xavierId: row('s2', '0000000000002-00000'),
+          yara: row(
+            's2',
+            '0000000000003-00000',
+            state: 'invited',
+            inviter: xavierId,
+          ),
+        },
+      );
+      expect(
+        await call(
+          'POST',
+          '/pending/${Uri.encodeComponent('newcomer:s2:$yara')}/decline',
+        ),
+        res(200, {'ok': true}),
+      );
+      await suratRow(
+        id: 's3',
+        creator: xavierId,
+        rows: {
+          myId: row(
+            's3',
+            '0000000000002-00000',
+            state: 'invited',
+            inviter: xavierId,
+          ),
+          xavierId: row('s3', '0000000000001-00000'),
+        },
+      );
+      expect(
+        await call(
+          'POST',
+          '/pending/${Uri.encodeComponent('invite:s3:$myId')}/approve',
+        ),
+        res(200, {'ok': true}),
+      );
+    });
+
+    test('pending errors', () async {
+      final (yara, _) = await pairedPeer('Yara');
+      await suratRow(
+        id: 's2',
+        rows: {
+          myId: row('s2', '0000000000001-00000'),
+          xavierId: row('s2', '0000000000002-00000'),
+          yara: row(
+            's2',
+            '0000000000003-00000',
+            state: 'invited',
+            inviter: xavierId,
+            mine: 'approved',
+          ),
+        },
+      );
+      expect(
+        await call(
+          'POST',
+          '/pending/${Uri.encodeComponent('newcomer:s2:$yara')}/decline',
+        ),
+        res(409, {'error': 'already_approved'}),
+      );
+      expect(
+        await call(
+          'POST',
+          '/pending/${Uri.encodeComponent('newcomer:s2:nobody')}/approve',
+        ),
+        res(404, {'error': 'unknown_pending'}),
+      );
+      expect(
+        await call('POST', '/pending/garbage/decline'),
+        res(404, {'error': 'unknown_pending'}),
+      );
+    });
+
+    test('surat routes need the bearer token', () async {
+      for (final (m, p) in [
+        ('POST', '/surat'),
+        ('POST', '/surat/x/invite'),
+        ('POST', '/surat/x/leave'),
+        ('POST', '/surat/x/rename'),
+        ('GET', '/pending'),
+        ('POST', '/pending/x/approve'),
+        ('POST', '/pending/x/decline'),
+      ]) {
+        expect((await call(m, p, auth: 'Bearer nope')).$1, 401, reason: p);
+      }
+    });
+
+    test(
+      'GET /channels shows members, renamer and pending for a surat',
+      () async {
+        final (yara, _) = await pairedPeer('Yara');
+        await suratRow(
+          id: 's2',
+          creator: xavierId,
+          rows: {
+            myId: row(
+              's2',
+              '0000000000002-00000',
+              mine: 'approved',
+              theirs: 'approved',
+            ),
+            xavierId: row(
+              's2',
+              '0000000000001-00000',
+              mine: 'approved',
+              theirs: 'declined',
+              person: 'Xavier',
+              device: 'Mac',
+            ),
+            yara: row(
+              's2',
+              '0000000000003-00000',
+              state: 'invited',
+              inviter: xavierId,
+              person: 'Yara',
+              device: 'Air',
+            ),
+          },
+        );
+        final list = (await call('GET', '/channels')).$2 as List;
+        final s = list.firstWhere((c) => c['id'] == 's2');
+        expect(s['kind'], 'surat');
+        expect(s['name'], 'Release');
+        expect(s['renamer'], xavierId);
+        expect(s['pending'], 1);
+        expect(s['closed'], isFalse);
+        final members = s['members'] as List;
+        expect(members.firstWhere((m) => m['deviceId'] == xavierId), {
+          'deviceId': xavierId,
+          'personName': 'Xavier',
+          'deviceName': 'Mac',
+          'state': 'member',
+          'mine': {'approval': 'approved'},
+          'theirs': {'approval': 'declined'},
+        });
+        expect(members.firstWhere((m) => m['deviceId'] == yara)['mine'], {
+          'approval': null,
+        });
+        // Private channels keep their shape.
+        final priv = list.firstWhere((c) => c['id'] == ch);
+        expect(priv.containsKey('members'), isFalse);
+        expect(priv.containsKey('renamer'), isFalse);
+      },
+    );
+
+    test(
+      'an ended surat is closed in /channels; unread counts messages only',
+      () async {
+        await suratRow(
+          id: 'end',
+          closedAt: 9,
+          rows: {myId: row('end', '0000000000001-00000')},
+        );
+        await db
+            .into(db.messages)
+            .insert(
+              MessagesCompanion.insert(
+                id: 'evt',
+                channelId: 'end',
+                kind: 'event',
+                fromDeviceId: xavierId,
+                sentAt: 1,
+                hlc: const Value('0000000000005-00000'),
+                seq: const Value(0),
+                body: const Value('{"type":"leave"}'),
+                direction: 'in',
+                status: 'unread',
+                createdAt: 1,
+              ),
+            );
+        final s = ((await call('GET', '/channels')).$2 as List).firstWhere(
+          (c) => c['id'] == 'end',
+        );
+        expect((s['closed'], s['unread']), (true, 0));
+      },
+    );
+
+    test('messages: kind, readable event lines, locked reasons', () async {
+      await suratRow(
+        id: 's2',
+        creator: xavierId,
+        rows: {
+          myId: row('s2', '0000000000002-00000', mine: 'approved'),
+          xavierId: row(
+            's2',
+            '0000000000001-00000',
+            theirs: 'approved',
+            person: 'Xavier',
+            device: 'Mac',
+          ),
+        },
+      );
+      final (yara, _) = await pairedPeer('Yara');
+      await db
+          .into(db.channelMembers)
+          .insert(
+            ChannelMembersCompanion.insert(
+              channelId: 's2',
+              deviceId: yara,
+              joinedHlc: '0000000000003-00000',
+              myApproval: const Value(null),
+              theirApproval: const Value('declined'),
+            ),
+          );
+      Future<void> put(
+        String id,
+        String kind,
+        String from,
+        String hlc,
+        String body,
+        String status,
+      ) => db
+          .into(db.messages)
+          .insert(
+            MessagesCompanion.insert(
+              id: id,
+              channelId: 's2',
+              kind: kind,
+              fromDeviceId: from,
+              sentAt: 1,
+              hlc: Value(hlc),
+              seq: Value(kind == 'event' ? 0 : 1),
+              body: Value(body),
+              direction: 'in',
+              status: status,
+              createdAt: 1,
+            ),
+          );
+      await put(
+        'e1',
+        'event',
+        xavierId,
+        '0000000000010-00000',
+        '{"type":"rename","name":"Launch"}',
+        'unread',
+      );
+      await put(
+        'm1',
+        'message',
+        xavierId,
+        '0000000000011-00000',
+        'hi',
+        'locked',
+      );
+      await put('m2', 'message', yara, '0000000000012-00000', 'yo', 'locked');
+      final (_, body) = await call('GET', '/channels/s2/messages');
+      final msgs = body['messages'] as List;
+      expect(msgs.map((m) => m['kind']), ['event', 'message', 'message']);
+      expect(msgs[0]['body'], 'Xavier renamed the surat to Launch');
+      expect(msgs[0].containsKey('lockedReason'), isFalse);
+      // Xavier approved me, so what is missing is my approval of him.
+      expect(msgs[1]['lockedReason'], 'you_have_not_approved_them');
+      expect(msgs[2]['lockedReason'], 'they_have_not_approved_you');
+    });
+
+    test(
+      'outbox: message drafts say kind message, event drafts a readable line',
+      () async {
+        await call('POST', '/channels/$ch/send', body: {'body': 'hi'});
+        await call(
+          'POST',
+          '/surat',
+          body: {
+            'name': 'Release',
+            'invite': [xavierId],
+          },
+        );
+        final outbox = (await call('GET', '/outbox')).$2 as List;
+        expect(outbox.map((d) => d['kind']), ['message', 'event']);
+        expect(outbox[0]['body'], 'hi');
+        expect(outbox[1]['body'], 'You created Release');
+        final (s, b) = await call('POST', '/outbox/${outbox[1]['id']}/discard');
+        expect((s, b['status']), (200, 'discarded'));
+        expect(
+          await (db.select(
+            db.channels,
+          )..where((c) => c.kind.equals('surat'))).get(),
+          isEmpty,
+        );
+      },
+    );
   });
 }

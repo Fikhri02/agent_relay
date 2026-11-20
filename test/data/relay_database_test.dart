@@ -166,6 +166,34 @@ void main() {
     });
   });
 
+  test('event rows never count as unread for either reader', () async {
+    await insert(id: 'm');
+    await db
+        .into(db.messages)
+        .insert(
+          MessagesCompanion.insert(
+            id: 'ev',
+            channelId: 'ch',
+            kind: 'event',
+            fromDeviceId: 'x',
+            sentAt: 1,
+            hlc: const Value('0000000002000-00000'),
+            body: const Value('{"type":"leave"}'),
+            direction: 'in',
+            status: 'unread',
+            createdAt: 1,
+          ),
+        );
+    for (final by in Reader.values) {
+      expect(await db.unreadCounts(by: by), {'ch': 1});
+      expect(
+        (await db.channelMessages('ch', unreadBy: by)).map((m) => m.id),
+        ['m'],
+      );
+    }
+    expect((await db.channelMessages('ch')).map((m) => m.id), ['m', 'ev']);
+  });
+
   test('unreadCounts counts per reader, per channel', () async {
     await insert(id: 'a');
     await insert(id: 'b', status: 'read', seenAt: 5);

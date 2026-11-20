@@ -9,6 +9,8 @@ import 'package:shelf_router/shelf_router.dart';
 import '../config/app_config.dart';
 import '../data/relay_database.dart';
 import '../messaging/message_service.dart';
+import '../surat/surat_service.dart';
+import 'surat_routes.dart';
 
 const appVersion = '1.0.0';
 const reachableWithinMs = 120000;
@@ -23,11 +25,13 @@ class LocalServer {
     required this.config,
     required this.db,
     required this.messages,
+    required this.surat,
     required this.me,
     this.deliverNow,
     this.deliverWait = const Duration(seconds: 5),
     int Function()? nowMs,
-  }) : _now = nowMs ?? (() => DateTime.now().millisecondsSinceEpoch);
+  }) : _now = nowMs ?? (() => DateTime.now().millisecondsSinceEpoch),
+       _surat = SuratRoutes(db: db, surat: surat, meDeviceId: me.deviceId);
 
   /// Runs one delivery pass. Approve calls it so the reply says what
   /// happened ("sent" or still queued) instead of guessing from last contact.
@@ -39,7 +43,9 @@ class LocalServer {
   final AppConfig config;
   final RelayDatabase db;
   final MessageService messages;
+  final SuratService surat;
   final LocalMe me;
+  final SuratRoutes _surat;
   final int Function() _now;
   late String _token;
   HttpServer? _server;
@@ -86,6 +92,7 @@ class LocalServer {
       ..get('/outbox', _outbox)
       ..post('/outbox/<id>/approve', _approve)
       ..post('/outbox/<id>/discard', _discard);
+    _surat.mount(r);
     return (Request req) {
       final auth = req.headers['authorization'] ?? '';
       if (auth != 'Bearer $_token') {
@@ -124,6 +131,7 @@ class LocalServer {
     // The local API is the agent's view: unread means not read by the agent,
     // even if the person already opened it in the app.
     final unread = await db.unreadCounts(by: Reader.agent);
+    final pending = await _surat.pendingCounts();
     final out = <Map<String, Object?>>[];
     for (final c in await db.select(db.channels).get()) {
       final members = await (db.select(
@@ -146,6 +154,8 @@ class LocalServer {
           },
         'unread': unread[c.id] ?? 0,
         'closed': c.closedAt != null,
+        if (c.kind == 'surat')
+          ..._surat.channelFields(c, members, peers, pending[c.id] ?? 0),
       });
     }
     return _ok(out);
@@ -154,9 +164,19 @@ class LocalServer {
   Future<Response> _messages(Request req, String id) async {
     final unreadOnly = req.url.queryParameters['status'] == 'unread';
     final peers = await _peerMap();
+    final channel = await (db.select(
+      db.channels,
+    )..where((c) => c.id.equals(id))).getSingleOrNull();
+    final inSurat = channel?.kind == 'surat';
+    final members = inSurat
+        ? await (db.select(
+            db.channelMembers,
+          )..where((m) => m.channelId.equals(id))).get()
+        : const <ChannelMember>[];
+    final memberNames = inSurat ? await _surat.memberNames(id) : const {};
     String nameOf(String deviceId) => deviceId == me.deviceId
         ? me.personName
-        : peers[deviceId]?.personName ?? 'Unknown';
+        : peers[deviceId]?.personName ?? memberNames[deviceId] ?? 'Unknown';
     final list = await messages.read(
       id,
       unreadOnly: unreadOnly,
@@ -167,6 +187,7 @@ class LocalServer {
       out.add({
         'id': m.id,
         'channelId': m.channelId,
+        'kind': m.kind,
         'direction': m.direction,
         'from': {
           'deviceId': m.fromDeviceId,
@@ -174,10 +195,12 @@ class LocalServer {
         },
         'sentAt': m.sentAt,
         'hlc': m.hlc,
-        'body': m.body,
+        'body': m.kind == 'event' ? await _surat.eventBody(m, peers) : m.body,
         'context': m.contextJson == null ? null : jsonDecode(m.contextJson!),
         'replyTo': m.replyTo,
         'status': m.status,
+        if (inSurat && m.status == 'locked')
+          'lockedReason': _surat.lockedReason(members, m.fromDeviceId),
         'arrivedLate': m.arrivedLate,
         if (m.direction == 'out')
           'receipts': [
@@ -227,17 +250,21 @@ class LocalServer {
     }
   }
 
-  Future<Response> _outbox(Request _) async => _ok([
-    for (final m in await db.drafts())
-      {
-        'id': m.id,
-        'channelId': m.channelId,
-        'body': m.body,
-        'context': m.contextJson == null ? null : jsonDecode(m.contextJson!),
-        'replyTo': m.replyTo,
-        'createdAt': m.createdAt,
-      },
-  ]);
+  Future<Response> _outbox(Request _) async {
+    final peers = await _peerMap();
+    return _ok([
+      for (final m in await db.drafts())
+        {
+          'id': m.id,
+          'channelId': m.channelId,
+          'kind': m.kind,
+          'body': m.kind == 'event' ? await _surat.eventBody(m, peers) : m.body,
+          'context': m.contextJson == null ? null : jsonDecode(m.contextJson!),
+          'replyTo': m.replyTo,
+          'createdAt': m.createdAt,
+        },
+    ]);
+  }
 
   Future<Message?> _find(String id) =>
       (db.select(db.messages)..where((m) => m.id.equals(id))).getSingleOrNull();

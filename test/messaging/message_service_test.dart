@@ -250,6 +250,40 @@ void main() {
     expect(timeline.map((m) => m.body), ['question', 'answer']);
   });
 
+  test('reading never marks an event row or queues a receipt for it', () async {
+    await sendAndDeliver(alice, bob, 'x');
+    await bob.db
+        .into(bob.db.messages)
+        .insert(
+          MessagesCompanion.insert(
+            id: 'ev1',
+            channelId: ch,
+            kind: 'event',
+            fromDeviceId: alice.id,
+            sentAt: 1,
+            hlc: const Value('9999999999999-00000'),
+            seq: const Value(0),
+            body: const Value('{"type":"leave"}'),
+            direction: 'in',
+            status: 'unread',
+            createdAt: 1,
+          ),
+        );
+    for (final by in Reader.values) {
+      final all = await bob.svc.read(ch, by: by);
+      expect(all.map((m) => m.kind), ['message', 'event']);
+      expect(await bob.svc.read(ch, unreadOnly: true, by: by), isEmpty);
+    }
+    final ev = await (bob.db.select(
+      bob.db.messages,
+    )..where((m) => m.id.equals('ev1'))).getSingle();
+    expect((ev.status, ev.seenAt, ev.agentReadAt), ('unread', null, null));
+    final receipts = await (bob.db.select(
+      bob.db.deliveries,
+    )..where((d) => d.messageId.like('receipt:ev1:%'))).get();
+    expect(receipts, isEmpty);
+  });
+
   test('read marks returned unread messages read', () async {
     await sendAndDeliver(alice, bob, 'x');
     final first = await bob.svc.read(ch, unreadOnly: true, by: Reader.agent);

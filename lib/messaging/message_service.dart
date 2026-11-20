@@ -468,7 +468,10 @@ class MessageService {
       unreadBy: unreadOnly ? by : null,
     );
     final now = _now();
-    for (final m in list.where((m) => m.direction == 'in')) {
+    // Event rows are shown but never read: no marks, no receipts.
+    for (final m in list.where(
+      (m) => m.direction == 'in' && m.kind != 'event',
+    )) {
       final already = by == Reader.agent ? m.agentReadAt : m.seenAt;
       await (db.update(db.messages)..where((x) => x.id.equals(m.id))).write(
         MessagesCompanion(
