@@ -243,9 +243,10 @@ void main() {
       create(1, 'a', ['b', 'c']),
       declineInvite(2, 'b'),
       declineInvite(3, 'c'),
-      accept(4, 'c'),
+      ev(4, 'a', const RenameEvent('After end')),
     ]);
     expect(all.ended, isTrue);
+    expect(all.name, 'Team');
     expect(all.members['c']!.state, MemberState.declined);
   });
 
@@ -335,8 +336,8 @@ void main() {
     expect(s.rejectedInvites, ['f']);
   });
 
-  test('snapshot start: newcomer sees the surat, renamer falls back when the '
-      'creator has left', () {
+  test('snapshot start: newcomer sees the surat; renamer is the earliest '
+      'member, the creator only when no member has a joinedHlc', () {
     SuratSnapshot snap(String creator) => SuratSnapshot(
       name: 'Team',
       creatorDeviceId: creator,
@@ -377,6 +378,78 @@ void main() {
       snapshot: snap('c'),
       events: [inv(snap('c'))],
     );
-    expect(present.renamer, 'c');
+    // c created the surat, but b joined earlier (h2 < h3).
+    expect(present.renamer, 'b');
+
+    final undated = SuratState.replay(
+      suratId: 's1',
+      snapshot: SuratSnapshot(
+        name: 'Team',
+        creatorDeviceId: 'c',
+        members: [_card('b'), _card('c')],
+        invited: const [],
+        approvals: const {},
+      ),
+      events: const [],
+    );
+    expect(undated.renamer, 'c');
+  });
+
+  test('snapshot and log agree on the renamer after the creator leaves and '
+      'rejoins', () {
+    final log = [
+      create(1, 'a', ['b', 'c']),
+      accept(2, 'b'),
+      accept(3, 'c'),
+      leave(4, 'a'),
+      invite(5, 'b', 'a'),
+      accept(6, 'a'),
+    ];
+    final members = replay(log);
+    expect(members.renamer, 'b');
+    expect(members.members['a']!.joinedHlc, h(6));
+
+    final snapshot = SuratSnapshot(
+      name: members.name,
+      creatorDeviceId: 'a',
+      members: [
+        for (final e in members.members.entries)
+          if (e.value.state == MemberState.member)
+            _card(e.key, hlc: e.value.joinedHlc),
+      ],
+      invited: const [],
+      approvals: {
+        for (final row in members.approvals.entries)
+          if (row.key == 'b')
+            row.key: {...row.value}
+          else if (row.value['b'] != null)
+            row.key: {'b': row.value['b']!},
+      },
+    );
+    final inviteD = ev(
+      7,
+      'b',
+      InviteEvent(newcomer: _card('d'), vouch: 'sig', snapshot: null),
+    );
+    final inviteDWithSnapshot = ev(
+      7,
+      'b',
+      InviteEvent(newcomer: _card('d'), vouch: 'sig', snapshot: snapshot),
+    );
+    final after = [
+      accept(8, 'd'),
+      ev(9, 'a', const RenameEvent('By a')),
+      ev(10, 'b', const RenameEvent('By b')),
+    ];
+    final onMembers = replay([...log, inviteD, ...after]);
+    final onD = SuratState.replay(
+      suratId: 's1',
+      snapshot: snapshot,
+      events: [inviteDWithSnapshot, ...after],
+    );
+    expect(onD.renamer, onMembers.renamer);
+    expect(onD.renamer, 'b');
+    expect(onD.name, 'By b');
+    expect(onMembers.name, 'By b');
   });
 }

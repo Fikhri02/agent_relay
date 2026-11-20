@@ -209,7 +209,12 @@ class _Fold {
     for (final a in snapshot.approvals.entries) {
       approvals[a.key] = {...a.value};
     }
-    renamer = isIn(snapshot.creatorDeviceId, MemberState.member)
+    // Same rule as the log path: the earliest member renames. The creator
+    // stands in only when no member's joinedHlc is known.
+    final dated = members.values.any(
+      (m) => m.state == MemberState.member && m.joinedHlc != null,
+    );
+    renamer = !dated && isIn(snapshot.creatorDeviceId, MemberState.member)
         ? snapshot.creatorDeviceId
         : earliestMember();
   }
