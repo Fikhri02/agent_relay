@@ -49,6 +49,15 @@ typedef ReceiptView = ({
   DateTime? agentReadAt,
 });
 
+/// Why a surat message is locked to me (spec §5).
+enum LockedReason {
+  /// The sender hasn't approved me, so they never sealed it for me.
+  theyHaveNotApprovedYou,
+
+  /// They approved me but I haven't approved them yet.
+  youHaveNotApprovedThem,
+}
+
 /// A message as the screens show it.
 class MessageView {
   const MessageView({
@@ -61,8 +70,10 @@ class MessageView {
     this.context,
     this.arrivedLate = false,
     this.locked = false,
+    this.lockedReason,
     this.mine = false,
     this.receipts = const [],
+    this.kind = 'message',
   }) : _initial = initial; // ignore: prefer_initializing_formals, named params can't be private
 
   static String _initialOf(String name) {
@@ -90,6 +101,7 @@ class MessageView {
     arrivedLate: row.arrivedLate,
     locked: row.status == 'locked',
     mine: row.direction == 'out',
+    kind: row.kind,
   );
 
   final String id;
@@ -106,7 +118,15 @@ class MessageView {
   final MessageContext? context;
   final bool arrivedLate;
   final bool locked;
+
+  /// Set on locked surat messages; null keeps the private-channel wording.
+  final LockedReason? lockedReason;
   final bool mine;
+
+  /// `message`, or `event` for a surat membership line ([body] is then the
+  /// readable line, shown as a system line).
+  final String kind;
+  bool get isEvent => kind == 'event';
 
   /// One per recipient, for my own messages.
   final List<ReceiptView> receipts;

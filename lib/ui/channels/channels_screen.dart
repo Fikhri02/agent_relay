@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../common/relay_widgets.dart';
+import '../surat/pending_panel.dart';
 import '../theme/relay_format.dart';
 import '../theme/relay_theme.dart';
 import 'channel_summary.dart';
@@ -23,6 +24,8 @@ class ChannelsScreen extends StatelessWidget {
     this.gaps = const [],
     this.peers = const {},
     this.suratMembers = const {},
+    this.pending = const [],
+    this.onDecide,
     this.awaitingApproval = 0,
     required this.onSelect,
     required this.onCopy,
@@ -48,6 +51,10 @@ class ChannelsScreen extends StatelessWidget {
 
   /// Surat channel id → member names, for the status line.
   final Map<String, List<String>> suratMembers;
+
+  /// Invites and newcomers waiting for me; the selected surat shows its own.
+  final List<PendingView> pending;
+  final void Function(String id, {required bool approve})? onDecide;
 
   /// Count on the Outbox tab.
   final int awaitingApproval;
@@ -121,10 +128,22 @@ class ChannelsScreen extends StatelessWidget {
               ? _PeerLine(peer: peers[channel.id], fallbackName: channel.name)
               : _SuratLine(members: suratMembers[channel.id]),
           const SizedBox(height: 12),
+          if (group != null && !group.closed && onDecide != null)
+            ..._pendingFor(group.id),
           Expanded(child: _timeline(context, channel)),
+          if (group != null && group.closed) const _EndedBar(),
         ],
       ),
     );
+  }
+
+  List<Widget> _pendingFor(String suratId) {
+    final mine = pending.where((p) => p.suratId == suratId).toList();
+    if (mine.isEmpty) return const [];
+    return [
+      PendingPanel(items: mine, onDecide: onDecide!),
+      const SizedBox(height: 12),
+    ];
   }
 
   Widget _timeline(BuildContext context, ChannelSummary channel) {
@@ -375,6 +394,36 @@ class _SuratLine extends StatelessWidget {
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
       style: TextStyle(fontSize: 12, color: RelayColors.of(context).muted),
+    );
+  }
+}
+
+/// Where a composer would sit: an ended surat is read-only.
+class _EndedBar extends StatelessWidget {
+  const _EndedBar();
+
+  @override
+  Widget build(BuildContext context) {
+    final c = RelayColors.of(context);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: c.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: c.line),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.archive_outlined, size: 16, color: c.muted),
+          const SizedBox(width: 8),
+          Text(
+            'This surat has ended',
+            style: TextStyle(fontSize: 13, color: c.muted),
+          ),
+        ],
+      ),
     );
   }
 }

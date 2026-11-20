@@ -14,6 +14,7 @@ import '../ui/setup/setup_screen.dart';
 import '../ui/shell/login_item.dart';
 import '../ui/shell/tray_controller.dart';
 import '../ui/shell/tray_entries.dart';
+import '../ui/surat/new_surat_dialog.dart';
 import '../ui/theme/relay_theme.dart';
 import 'app_controller.dart';
 
@@ -71,7 +72,7 @@ class _RelayAppState extends State<RelayApp> with WindowListener {
 
   void _pushTray() {
     final ctl = _ctl;
-    final channels = ctl?.channels ?? const [];
+    final channels = [...?ctl?.channels, ...?ctl?.surat];
     _tray.update(
       trayEntries(
         unread: {for (final c in channels) c.id: c.unread},
@@ -102,6 +103,9 @@ class _RelayAppState extends State<RelayApp> with WindowListener {
       case TrayCommand.pairTeammate:
         await _show();
         _openPairing();
+      case TrayCommand.newSurat:
+        await _show();
+        await _openNewSurat();
       case TrayCommand.toggleLaunchAtLogin:
         final v = await _login.setEnabled(!_launchAtLogin);
         setState(() => _launchAtLogin = v);
@@ -120,6 +124,17 @@ class _RelayAppState extends State<RelayApp> with WindowListener {
       MaterialPageRoute<void>(
         builder: (_) => _PairingPage(node: widget.node, ctl: ctl),
       ),
+    );
+  }
+
+  Future<void> _openNewSurat() async {
+    final ctl = _ctl;
+    final context = _nav.currentState?.overlay?.context;
+    if (ctl == null || context == null) return;
+    await showDialog<void>(
+      context: context,
+      builder: (_) =>
+          NewSuratDialog(people: ctl.pairedPeers, onCreate: ctl.createSurat),
     );
   }
 
@@ -178,6 +193,11 @@ class _RelayAppState extends State<RelayApp> with WindowListener {
               )
             : ChannelsScreen(
                 channels: ctl.channels,
+                surat: ctl.surat,
+                suratMembers: ctl.suratMembers,
+                pending: ctl.pending,
+                onDecide: (id, {required approve}) =>
+                    unawaited(ctl.decide(id, approve: approve)),
                 selectedId: ctl.selectedId,
                 messages: ctl.messages,
                 gaps: ctl.gaps,

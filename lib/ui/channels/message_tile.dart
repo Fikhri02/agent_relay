@@ -13,6 +13,8 @@ import 'sticky_follower.dart';
 /// memo has its sender's disc beside it — theirs on the left, mine on the
 /// right — in the sender's colour, and the disc follows a long memo while it
 /// scrolls. A locked message is a dashed box with a lock and no Copy button.
+/// A surat membership event is a centred one-line system line instead, with
+/// no disc and no Copy.
 class MessageTile extends StatelessWidget {
   const MessageTile({super.key, required this.message, this.onCopy});
 
@@ -23,6 +25,7 @@ class MessageTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (message.isEvent) return _systemLine(context);
     final indent = message.mine
         ? const EdgeInsets.only(left: 48)
         : const EdgeInsets.only(right: 48);
@@ -84,6 +87,47 @@ class MessageTile extends StatelessWidget {
     );
   }
 
+  Widget _systemLine(BuildContext context) {
+    final c = RelayColors.of(context);
+    final rule = Expanded(child: Divider(color: c.line, height: 1));
+    return KeyedSubtree(
+      key: ValueKey('event-${message.id}'),
+      child: LayoutBuilder(
+        // The rules share what the text leaves, so the line stays centred.
+        builder: (context, box) => Row(
+          children: [
+            rule,
+            ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: box.maxWidth * .8),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Text(
+                  message.body ?? '',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 12, height: 1.4, color: c.muted),
+                ),
+              ),
+            ),
+            rule,
+          ],
+        ),
+      ),
+    );
+  }
+
+  String get _lockedText {
+    final name = message.senderName;
+    return switch (message.lockedReason) {
+      LockedReason.theyHaveNotApprovedYou =>
+        "Locked — $name hasn't approved you",
+      LockedReason.youHaveNotApprovedThem =>
+        "Locked — $name hasn't been approved by you",
+      null => "Locked — $name hasn't approved you yet",
+    };
+  }
+
   Widget _locked(BuildContext context) {
     final c = RelayColors.of(context);
     return DashedBorderBox(
@@ -94,7 +138,7 @@ class MessageTile extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              "Locked — ${message.senderName} hasn't approved you yet",
+              _lockedText,
               style: TextStyle(fontSize: 13, color: c.muted),
             ),
           ),

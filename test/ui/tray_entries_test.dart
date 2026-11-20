@@ -28,6 +28,7 @@ void main() {
       '---',
       'action:Open Relay',
       'action:Pair a Teammate…',
+      'action:New surat…',
       'action:Launch at Login [x]',
       '---',
       'action:Quit Agent Relay',
@@ -37,6 +38,10 @@ void main() {
     expect(xavier.channelId, 'c1');
     expect((entries[3] as TrayAction).command, TrayCommand.openOutbox);
     expect((entries.last as TrayAction).command, TrayCommand.quit);
+    final newSurat = entries.whereType<TrayAction>().firstWhere(
+      (e) => e.label == 'New surat…',
+    );
+    expect(newSurat.command, TrayCommand.newSurat);
   });
 
   test('nothing unread and empty outbox: plain title, no outbox line', () {
@@ -50,6 +55,7 @@ void main() {
       '---',
       'action:Open Relay',
       'action:Pair a Teammate…',
+      'action:New surat…',
       'action:Launch at Login',
       '---',
       'action:Quit Agent Relay',

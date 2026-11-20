@@ -130,6 +130,106 @@ void main() {
     expect(find.text('Copy'), findsNothing);
   });
 
+  testWidgets('locked tile shows "Locked — Xaves hasn\'t approved you" and '
+      '"Locked — Xaves hasn\'t been approved by you"', (tester) async {
+    MessageView locked(String id, LockedReason why) => MessageView(
+      id: id,
+      senderName: 'Xaves',
+      senderId: 'dev-x',
+      sentAt: sentAt,
+      locked: true,
+      lockedReason: why,
+    );
+    await pumpUi(
+      tester,
+      Column(
+        children: [
+          MessageTile(
+            message: locked('l1', LockedReason.theyHaveNotApprovedYou),
+            onCopy: (_) {},
+          ),
+          MessageTile(
+            message: locked('l2', LockedReason.youHaveNotApprovedThem),
+            onCopy: (_) {},
+          ),
+        ],
+      ),
+    );
+    expect(find.text("Locked — Xaves hasn't approved you"), findsOneWidget);
+    expect(
+      find.text("Locked — Xaves hasn't been approved by you"),
+      findsOneWidget,
+    );
+    expect(find.text('Copy'), findsNothing);
+  });
+
+  testWidgets('event row renders as a system line without a disc', (
+    tester,
+  ) async {
+    await pumpUi(
+      tester,
+      MessageTile(
+        message: MessageView(
+          id: 'e1',
+          kind: 'event',
+          senderName: 'Xaves',
+          senderId: 'dev-x',
+          sentAt: sentAt,
+          body: 'Xaves invited Tommy',
+        ),
+        onCopy: (_) {},
+      ),
+    );
+    final line = find.text('Xaves invited Tommy');
+    expect(line, findsOneWidget);
+    expect(find.byKey(const ValueKey('disc-e1')), findsNothing);
+    expect(find.text('Copy'), findsNothing);
+    expect(find.text('From'), findsNothing);
+    expect(tester.widget<Text>(line).maxLines, 1);
+    final width = tester.view.physicalSize.width;
+    expect(tester.getCenter(line).dx, closeTo(width / 2, 1));
+  });
+
+  for (final b in Brightness.values) {
+    testWidgets('system line and locked tile render in ${b.name} mode', (
+      tester,
+    ) async {
+      await pumpUi(
+        tester,
+        Column(
+          children: [
+            MessageTile(
+              message: MessageView(
+                id: 'e1',
+                kind: 'event',
+                senderName: 'Xaves',
+                sentAt: sentAt,
+                body: 'Xaves invited Tommy',
+              ),
+            ),
+            MessageTile(
+              message: MessageView(
+                id: 'l1',
+                senderName: 'Xaves',
+                sentAt: sentAt,
+                locked: true,
+                lockedReason: LockedReason.theyHaveNotApprovedYou,
+              ),
+            ),
+          ],
+        ),
+        brightness: b,
+      );
+      final ctx = tester.element(find.text('Xaves invited Tommy'));
+      final c = RelayColors.of(ctx);
+      expect(Theme.of(ctx).brightness, b);
+      expect(
+        tester.widget<Text>(find.text('Xaves invited Tommy')).style?.color,
+        c.muted,
+      );
+    });
+  }
+
   test(
     'context parses from the stored JSON and joins repo, branch, commit',
     () {

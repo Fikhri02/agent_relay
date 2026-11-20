@@ -6,6 +6,7 @@ enum TrayCommand {
   openOutbox,
   openRelay,
   pairTeammate,
+  newSurat,
   toggleLaunchAtLogin,
   quit,
 }
@@ -62,6 +63,7 @@ List<TrayEntry> trayEntries({
     const TraySeparator(),
     const TrayAction('Open Relay', TrayCommand.openRelay),
     const TrayAction('Pair a Teammate…', TrayCommand.pairTeammate),
+    const TrayAction('New surat…', TrayCommand.newSurat),
     TrayAction(
       'Launch at Login',
       TrayCommand.toggleLaunchAtLogin,

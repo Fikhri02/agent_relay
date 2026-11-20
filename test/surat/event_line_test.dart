@@ -58,4 +58,32 @@ void main() {
   test('ended line', () {
     expect(endedLine('Aina'), 'Surat ended — Aina is the last member');
   });
+
+  test('eventLine covers every event type', () {
+    final lines = {
+      CreateEvent: line(
+        CreateEvent(name: 'Release', invitees: [card('b')], vouches: {}),
+      ),
+      InviteEvent: line(
+        InviteEvent(newcomer: card('b'), vouch: 'v', snapshot: null),
+      ),
+      AcceptEvent: line(const AcceptEvent(), from: 'b'),
+      DeclineInviteEvent: line(const DeclineInviteEvent(), from: 'b'),
+      ApproveEvent: line(const ApproveEvent('b')),
+      DeclineEvent: line(const DeclineEvent('b')),
+      LeaveEvent: line(const LeaveEvent()),
+      RenameEvent: line(const RenameEvent('Launch')),
+    };
+    expect(lines, {
+      CreateEvent: 'Aina created Release',
+      InviteEvent: 'Aina invited Budi',
+      AcceptEvent: 'Budi joined',
+      DeclineInviteEvent: 'Budi declined the invite',
+      ApproveEvent: 'Aina approved Budi',
+      DeclineEvent: 'Aina declined Budi',
+      LeaveEvent: 'Aina left',
+      RenameEvent: 'Aina renamed the surat to Launch',
+    });
+    expect(endedLine('Aina'), 'Surat ended — Aina is the last member');
+  });
 }

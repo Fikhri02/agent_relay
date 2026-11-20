@@ -1,6 +1,8 @@
 import 'package:agent_relay/ui/channels/channel_summary.dart';
 import 'package:agent_relay/ui/channels/channels_screen.dart';
 import 'package:agent_relay/ui/channels/message_view.dart';
+import 'package:agent_relay/ui/surat/pending_panel.dart';
+import 'package:agent_relay/ui/theme/relay_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -45,6 +47,8 @@ Widget screen({
   List<GapView> gaps = const [],
   ValueChanged<String>? onSelect,
   Widget? outboxPane,
+  List<PendingView> pending = const [],
+  void Function(String id, {required bool approve})? onDecide,
 }) => ChannelsScreen(
   channels: chans,
   surat: suratList,
@@ -62,6 +66,8 @@ Widget screen({
   onSelect: onSelect ?? (_) {},
   onCopy: (_) {},
   outboxPane: outboxPane,
+  pending: pending,
+  onDecide: onDecide,
 );
 
 void main() {
@@ -123,6 +129,127 @@ void main() {
     await pumpUi(tester, screen(selectedId: 't', msgs: const []));
     expect(find.text('Surat · You, Xavier, Tommy, Shaw Ping'), findsOneWidget);
   });
+
+  testWidgets('surat stage shows its own pending decisions only', (
+    tester,
+  ) async {
+    final decided = <(String, bool)>[];
+    await pumpUi(
+      tester,
+      screen(
+        selectedId: 't',
+        msgs: const [],
+        pending: const [
+          PendingView(
+            id: 'newcomer:t:d3',
+            suratId: 't',
+            kind: PendingKind.newcomer,
+            suratName: 'tiered-discount staging',
+            inviter: 'Xavier',
+            newcomer: 'Tommy',
+          ),
+          PendingView(
+            id: 'invite:other:me',
+            suratId: 'other',
+            kind: PendingKind.invite,
+            suratName: 'Elsewhere',
+            inviter: 'Shaw Ping',
+          ),
+        ],
+        onDecide: (id, {required approve}) => decided.add((id, approve)),
+      ),
+    );
+    expect(
+      find.text('Xavier invited Tommy to tiered-discount staging'),
+      findsOneWidget,
+    );
+    expect(find.text('Shaw Ping invited you to Elsewhere'), findsNothing);
+    await tester.tap(find.widgetWithText(FilledButton, 'Approve'));
+    expect(decided, [('newcomer:t:d3', true)]);
+  });
+
+  testWidgets('an ended surat is marked closed and says it has ended', (
+    tester,
+  ) async {
+    await pumpUi(
+      tester,
+      screen(
+        selectedId: 't',
+        suratList: const [
+          (id: 't', name: 'tiered-discount staging', unread: 0, closed: true),
+        ],
+        msgs: [
+          MessageView(
+            id: 'e1',
+            kind: 'event',
+            senderName: 'Xavier',
+            sentAt: DateTime(2026, 11, 20, 9, 50),
+            body: 'Surat ended — Irfan is the last member',
+          ),
+        ],
+        pending: const [
+          PendingView(
+            id: 'newcomer:t:d3',
+            suratId: 't',
+            kind: PendingKind.newcomer,
+            suratName: 'tiered-discount staging',
+            inviter: 'Xavier',
+            newcomer: 'Tommy',
+          ),
+        ],
+      ),
+    );
+    expect(find.byType(FilledButton), findsNothing, reason: 'no actions');
+    expect(find.text('tiered-discount staging · closed'), findsOneWidget);
+    expect(find.text('This surat has ended'), findsOneWidget);
+    expect(find.text('Surat ended — Irfan is the last member'), findsOneWidget);
+  });
+
+  testWidgets('an open surat has no ended bar', (tester) async {
+    await pumpUi(tester, screen(selectedId: 't', msgs: const []));
+    expect(find.text('This surat has ended'), findsNothing);
+  });
+
+  for (final b in Brightness.values) {
+    testWidgets('surat stage renders in ${b.name} mode', (tester) async {
+      await pumpUi(
+        tester,
+        screen(
+          selectedId: 't',
+          suratList: const [
+            (id: 't', name: 'tiered-discount staging', unread: 0, closed: true),
+          ],
+          msgs: [
+            MessageView(
+              id: 'e1',
+              kind: 'event',
+              senderName: 'Xavier',
+              sentAt: DateTime(2026, 11, 20, 9, 50),
+              body: 'Xavier invited Tommy',
+            ),
+          ],
+          pending: const [
+            PendingView(
+              id: 'newcomer:t:d3',
+              suratId: 't',
+              kind: PendingKind.newcomer,
+              suratName: 'tiered-discount staging',
+              inviter: 'Xavier',
+              newcomer: 'Tommy',
+            ),
+          ],
+        ),
+        brightness: b,
+      );
+      final ctx = tester.element(find.text('This surat has ended'));
+      expect(Theme.of(ctx).brightness, b);
+      expect(
+        tester.widget<Text>(find.text('This surat has ended')).style?.color,
+        RelayColors.of(ctx).muted,
+      );
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   testWidgets('Outbox tab shows the outbox pane in the stage', (tester) async {
     await pumpUi(
