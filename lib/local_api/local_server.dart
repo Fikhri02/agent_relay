@@ -79,8 +79,9 @@ class LocalServer {
       ..post('/outbox/<id>/discard', _discard);
     return (Request req) {
       final auth = req.headers['authorization'] ?? '';
-      if (auth != 'Bearer $_token')
+      if (auth != 'Bearer $_token') {
         return _json(401, {'error': 'unauthorized'});
+      }
       return r.call(req);
     };
   }

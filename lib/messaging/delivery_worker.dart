@@ -34,7 +34,8 @@ class DeliveryWorker {
   final int Function() _now;
   final _skewNoticeSent = <String>{};
   Timer? _timer;
-  bool _running = false;
+  Future<void>? _current;
+  bool _again = false;
 
   void start({Duration tick = const Duration(seconds: 5)}) {
     _timer?.cancel();
@@ -53,25 +54,38 @@ class DeliveryWorker {
     if (_timer != null) unawaited(runOnce());
   }
 
+  /// One pass over due deliveries. A call made while a pass is running
+  /// waits for it and then runs one more pass, so nothing is skipped.
   Future<void> runOnce() async {
-    if (_running) return;
-    _running = true;
-    try {
-      await _expireDrafts();
-      final peers = {
-        for (final p in await db.select(db.peers).get()) p.deviceId: p,
-      };
-      for (final d in await db.dueDeliveries(_now())) {
-        final peer = peers[d.recipientDeviceId];
-        if (peer == null || peer.trust != 'paired') continue;
-        await _attempt(d, peer);
-        // A peer may change state (unpaired, mismatch) mid-run.
-        peers[peer.deviceId] = await (db.select(
-          db.peers,
-        )..where((p) => p.deviceId.equals(peer.deviceId))).getSingle();
+    if (_current != null) {
+      _again = true;
+      await _current;
+      return;
+    }
+    do {
+      _again = false;
+      _current = _pass();
+      try {
+        await _current;
+      } finally {
+        _current = null;
       }
-    } finally {
-      _running = false;
+    } while (_again);
+  }
+
+  Future<void> _pass() async {
+    await _expireDrafts();
+    final peers = {
+      for (final p in await db.select(db.peers).get()) p.deviceId: p,
+    };
+    for (final d in await db.dueDeliveries(_now())) {
+      final peer = peers[d.recipientDeviceId];
+      if (peer == null || peer.trust != 'paired') continue;
+      await _attempt(d, peer);
+      // A peer may change state (unpaired, mismatch) mid-run.
+      peers[peer.deviceId] = await (db.select(
+        db.peers,
+      )..where((p) => p.deviceId.equals(peer.deviceId))).getSingle();
     }
   }
 

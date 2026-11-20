@@ -57,7 +57,10 @@ class PeerClient implements PeerTransport {
   }) : _now = nowMs ?? (() => DateTime.now().millisecondsSinceEpoch);
 
   final LocalIdentity me;
-  final int relayPort;
+
+  /// The port this Mac's peer server listens on, sent as `x-relay-port`.
+  /// Set after binding when the configured port is 0.
+  int relayPort;
   final Duration timeout;
   final int Function() _now;
 

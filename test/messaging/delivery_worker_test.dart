@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:agent_relay/crypto/identity_keys.dart';
@@ -16,6 +17,7 @@ import '../support/fixtures.dart';
 class FakeTransport implements PeerTransport {
   final calls = <(PeerTarget, String)>[];
   Object next = 200;
+  Completer<void>? gate;
 
   @override
   Future<PeerResponse> post(
@@ -24,6 +26,7 @@ class FakeTransport implements PeerTransport {
     Map<String, dynamic> body,
   ) async {
     calls.add((t, path));
+    if (gate != null) await gate!.future;
     final n = next;
     if (n is Exception) throw n;
     return (
@@ -261,4 +264,21 @@ void main() {
       expect(net.calls.single.$2, '/relay/receipt');
     },
   );
+
+  test('runOnce called during a pass waits for it and runs again', () async {
+    await queuedMessage('first');
+    final gate = Completer<void>();
+    net.gate = gate;
+    final firstPass = worker.runOnce(); // blocks inside the first post
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    final second = await queuedMessage(
+      'second',
+    ); // queued after that pass looked
+    net.gate = null;
+    final secondCall = worker.runOnce();
+    gate.complete();
+    await firstPass;
+    await secondCall;
+    expect((await delivery(second)).status, 'delivered');
+  });
 }
