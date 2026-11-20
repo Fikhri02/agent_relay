@@ -457,6 +457,28 @@ void main() {
     expect(notes.shown.single.title, 'Xavier unpaired');
   });
 
+  test('a history copy dropped after 7 days shows no notice and leaves the message', () async {
+    final id = await queuedMessage();
+    await db
+        .into(db.deliveries)
+        .insert(
+          DeliveriesCompanion.insert(
+            messageId: 'history:$id:$peerId',
+            recipientDeviceId: peerId,
+            envelopeJson: jsonEncode({'path': '/relay/deliver', 'payload': {}}),
+            status: 'queued',
+            nextAttemptAt: now,
+            createdAt: now,
+          ),
+        );
+    now += 7 * 24 * 3600 * 1000 + 1;
+    await worker.runOnce();
+    expect((await delivery('history:$id:$peerId')).status, 'dropped');
+    // Only the live copy's notice; the history copy adds none.
+    expect(notes.shown, hasLength(1));
+    expect((await message(id)).status, 'queued');
+  });
+
   test(
     'receipts are sent to /relay/receipt and do not touch message status',
     () async {

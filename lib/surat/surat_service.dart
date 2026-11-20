@@ -50,6 +50,8 @@ class SuratService {
   final int Function()? myPort;
   final int Function() _now;
   final _changes = StreamController<SuratChange>.broadcast();
+  final _reshares = <BecameMutual>[];
+  var _inPublish = 0;
   late final _projection = SuratProjection(
     db: db,
     me: me,
@@ -172,7 +174,17 @@ class SuratService {
   /// of an invite carries the surat's snapshot; every other copy, and my row,
   /// carry none. Events use seq 0 so message seqs stay contiguous. An ended
   /// surat takes no more events ([ChannelClosed]).
-  Future<void> publish(Message draft) => db.transaction(() async {
+  Future<void> publish(Message draft) async {
+    _inPublish++;
+    try {
+      await db.transaction(() => _publishInTransaction(draft));
+    } finally {
+      _inPublish--;
+    }
+    if (_inPublish == 0) await _flushReshares();
+  }
+
+  Future<void> _publishInTransaction(Message draft) async {
     final event = SuratProjection.decode(draft.body);
     if (event == null) throw StateError('draft ${draft.id} is no surat event');
     final suratId = draft.channelId;
@@ -252,7 +264,34 @@ class SuratService {
       MessagesCompanion(status: Value(to.isEmpty ? 'sent' : 'queued')),
     );
     await rebuild(suratId);
-  });
+  }
+
+  /// Emits [changes]; each [BecameMutual] also re-shares my own history to
+  /// that member. Inside a publish transaction the re-share waits for the
+  /// commit, and a failure to queue never undoes what was committed.
+  Future<void> _announce(Iterable<SuratChange> changes) async {
+    for (final c in changes) {
+      _changes.add(c);
+      if (c is BecameMutual) _reshares.add(c);
+    }
+    if (_inPublish == 0) await _flushReshares();
+  }
+
+  Future<void> _flushReshares() async {
+    while (_reshares.isNotEmpty) {
+      final c = _reshares.removeAt(0);
+      try {
+        final peer = await (db.select(
+          db.peers,
+        )..where((p) => p.deviceId.equals(c.deviceId))).getSingleOrNull();
+        if (peer != null && canTalk(peer)) {
+          await messages.reshareOwn(c.suratId, peer);
+        }
+      } on Object {
+        // History is best effort; the live path is unaffected.
+      }
+    }
+  }
 
   /// A discarded or expired `CreateEvent` draft takes its never-published
   /// surat with it. Other drafts leave nothing to undo.
@@ -279,7 +318,7 @@ class SuratService {
   /// `Channels`. Running it twice changes nothing the second time.
   Future<SuratState> rebuild(String suratId) async {
     final result = await db.transaction(() => _projectInTransaction(suratId));
-    result.changes.forEach(_changes.add);
+    await _announce(result.changes);
     return result.state;
   }
 
@@ -291,7 +330,7 @@ class SuratService {
     required Peer from,
   }) async {
     final r = await _receiver.receive(e, from: from);
-    r.changes.forEach(_changes.add);
+    await _announce(r.changes);
     return (duplicate: r.duplicate);
   }
 

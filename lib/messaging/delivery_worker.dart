@@ -141,7 +141,8 @@ class DeliveryWorker {
   Future<bool> _dropIfTooOld(Delivery d, Peer? peer) async {
     if (_now() - d.createdAt <= queueLifetimeMs) return false;
     await _set(d, status: 'dropped', error: 'older than 7 days');
-    if (!d.messageId.startsWith('receipt:')) {
+    if (!d.messageId.startsWith('receipt:') &&
+        !d.messageId.startsWith(historyPrefix)) {
       await notifier.show(
         NotificationText(
           "Couldn't deliver to ${peer?.personName ?? 'a teammate'}",
@@ -310,7 +311,9 @@ class DeliveryWorker {
   /// Whether this delivery (a message, or a receipt for one) belongs to a
   /// private channel.
   Future<bool> _isPrivate(Delivery d) async {
-    final id = d.messageId.startsWith('receipt:')
+    final id =
+        d.messageId.startsWith('receipt:') ||
+            d.messageId.startsWith(historyPrefix)
         ? d.messageId.split(':')[1]
         : d.messageId;
     final q = db.select(db.channels).join([

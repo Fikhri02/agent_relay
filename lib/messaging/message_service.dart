@@ -16,6 +16,9 @@ export '../data/relay_database.dart' show Reader;
 const maxBodyBytes = 32768;
 const lateAfterMs = 120000;
 
+/// Delivery-id prefix of a history re-share: `history:{messageId}:{to}`.
+const historyPrefix = 'history:';
+
 class BodyTooLarge implements Exception {
   const BodyTooLarge(this.bytes);
   final int bytes;
@@ -281,6 +284,71 @@ class MessageService {
     return out;
   }
 
+  /// Re-sends my own past messages of [channelId] to [to], sealed for them,
+  /// with their original id, stamp and seq and `history: true`, so a newcomer
+  /// (or a member who just approved me) sees them and a locked placeholder
+  /// unlocks. Never drafts, discarded or expired rows, never anyone else's
+  /// messages, never events. Queued once per message and recipient. Returns
+  /// how many were newly queued. The caller guarantees we approve each other.
+  Future<int> reshareOwn(String channelId, Peer to) async {
+    final rows =
+        await (db.select(db.messages)
+              ..where(
+                (m) =>
+                    m.channelId.equals(channelId) &
+                    m.direction.equals('out') &
+                    m.kind.equals('message') &
+                    m.fromDeviceId.equals(myDeviceId) &
+                    m.hlc.isNotNull() &
+                    m.status.isIn(const ['queued', 'sent']),
+              )
+              ..orderBy([(m) => OrderingTerm.asc(m.seq)]))
+            .get();
+    final now = _now();
+    var queued = 0;
+    for (final m in rows) {
+      final id = '$historyPrefix${m.id}:${to.deviceId}';
+      final exists =
+          await (db.select(db.deliveries)..where(
+                (d) =>
+                    d.messageId.equals(id) &
+                    d.recipientDeviceId.equals(to.deviceId),
+              ))
+              .getSingleOrNull();
+      if (exists != null) continue;
+      Envelope env(SealedEnvelope? sealed) => Envelope(
+        id: m.id,
+        channelId: m.channelId,
+        kind: m.kind,
+        from: myDeviceId,
+        sentAt: m.sentAt,
+        hlc: m.hlc!,
+        seq: m.seq!,
+        replyTo: m.replyTo,
+        history: true,
+        sealed: sealed,
+      );
+      final plain = utf8.encode(
+        jsonEncode({
+          'body': m.body,
+          if (m.contextJson != null) 'context': jsonDecode(m.contextJson!),
+        }),
+      );
+      final aad = env(const SealedEnvelope(eph: '', nonce: '', ct: '', mac: ''))
+          .aad;
+      final sealed = await seal(plain, recipientBoxPub: to.boxPub, aad: aad);
+      await _queue(
+        id,
+        to.deviceId,
+        '/relay/deliver',
+        env(sealed).toJson(),
+        now,
+      );
+      queued++;
+    }
+    return queued;
+  }
+
   Future<void> _queue(
     String messageId,
     String to,
@@ -472,7 +540,7 @@ class MessageService {
     final m = await (db.select(
       db.messages,
     )..where((x) => x.id.equals(messageId))).getSingleOrNull();
-    if (m == null) return; // a receipt, not a message
+    if (m == null) return; // a receipt or a history copy, not a message
     final open =
         await (db.select(db.deliveries)..where(
               (d) => d.messageId.equals(messageId) & d.status.equals('queued'),
