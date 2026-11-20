@@ -468,9 +468,10 @@ class MessageService {
       unreadBy: unreadOnly ? by : null,
     );
     final now = _now();
-    // Event rows are shown but never read: no marks, no receipts.
+    // Event rows and locked placeholders are shown but never read: no marks,
+    // no receipts. A placeholder that unlocks later is then still unread.
     for (final m in list.where(
-      (m) => m.direction == 'in' && m.kind != 'event',
+      (m) => m.direction == 'in' && m.kind != 'event' && m.status != 'locked',
     )) {
       final already = by == Reader.agent ? m.agentReadAt : m.seenAt;
       await (db.update(db.messages)..where((x) => x.id.equals(m.id))).write(
@@ -486,7 +487,7 @@ class MessageService {
               : const Value.absent(),
         ),
       );
-      if (already == null && m.status != 'locked') {
+      if (already == null) {
         final kind = by == Reader.agent ? 'agent_read' : 'seen';
         await _queue(
           'receipt:${m.id}:$kind',

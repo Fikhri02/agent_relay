@@ -219,6 +219,46 @@ void main() {
     expect((await bob.message(fromCarol)).status, isNot('locked'));
   });
 
+  test('a placeholder read while locked is unread once it unlocks, and '
+      'reading it then sends the receipts', () async {
+    final suratId = await tripWithBob();
+    final newcomer = await carolInvited(suratId);
+    await flush(alice, carol);
+    now += 1000;
+    await bob.surat.decide(newcomer, approve: false);
+    await flush(bob, alice);
+    await flush(bob, carol);
+    final fromBob = await send(bob, suratId, 'bob to all');
+    await flush(bob, carol);
+    // Carol's agent and Carol herself open the surat while it is locked.
+    for (final by in Reader.values) {
+      await carol.messages.read(suratId, by: by);
+    }
+
+    now += 1000;
+    await bob.surat.decide(newcomer, approve: true);
+    await flush(bob, carol);
+
+    for (final by in Reader.values) {
+      expect(
+        (await carol.messages.read(
+          suratId,
+          unreadOnly: true,
+          by: by,
+        )).map((m) => (m.id, m.body)),
+        [(fromBob, 'bob to all')],
+        reason: by.name,
+      );
+    }
+    final receipts = await (carol.db.select(
+      carol.db.deliveries,
+    )..where((d) => d.messageId.like('receipt:$fromBob:%'))).get();
+    expect(receipts.map((d) => d.messageId).toSet(), {
+      'receipt:$fromBob:agent_read',
+      'receipt:$fromBob:seen',
+    });
+  });
+
   test('re-sharing twice queues no duplicate', () async {
     final suratId = await tripWithBob();
     await send(alice, suratId, 'once');
