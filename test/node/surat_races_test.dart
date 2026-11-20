@@ -162,4 +162,37 @@ void main() {
       expect((n.notifier as RecordingNotifier).shown, isEmpty);
     }
   });
+
+  test('a surat message that overtakes its sender\'s accept is delivered '
+      'once the accept lands', () async {
+    final a = await start('A', 'Irfan'), b = await start('B', 'Xavier');
+    await pair(a, b);
+    final createId = await a.surat.draftCreate('race', [id(b)]);
+    final s = (await (a.db.select(
+      a.db.messages,
+    )..where((m) => m.id.equals(createId))).getSingle()).channelId;
+    await a.messages.approve(createId);
+    await deliverAll([a, b]);
+
+    // B accepts, but the accept to A sits in backoff.
+    await b.surat.decide('invite:$s:${id(b)}', approve: true);
+    await (b.db.update(b.db.deliveries)
+          ..where((d) => d.status.equals('queued')))
+        .write(const DeliveriesCompanion(nextAttemptAt: Value(1 << 52)));
+    final m = await b.messages.draft(channelId: s, body: 'hello all');
+    await b.messages.approve(m.id);
+    await b.worker.runOnce();
+    final early = await deliveryOf(b, m.id);
+    expect((early.status, early.lastError), ('queued', 'not_a_member'));
+
+    await deliverAll([a, b]);
+    expect((await deliveryOf(b, m.id)).status, 'delivered');
+    expect(
+      [
+        for (final x in await a.db.channelMessages(s))
+          if (x.kind == 'message') x.body,
+      ],
+      ['hello all'],
+    );
+  });
 }

@@ -287,6 +287,12 @@ class DeliveryWorker {
         // Events from different senders arrive in any order: an accept can
         // land before the invite that seats its sender. Try again later.
         await _retry(d, 'not_a_member');
+      } else if (env['path'] == '/relay/deliver' &&
+          res.status == 403 &&
+          await _mayStillSeat(d, peer.deviceId)) {
+        // A surat message (or history copy) can overtake its sender's
+        // accept or invite to that Mac. Try again; 7 days bound it.
+        await _retry(d, 'not_a_member');
       } else if (res.status >= 400 && res.status < 500) {
         await _set(
           d,
@@ -321,18 +327,56 @@ class DeliveryWorker {
     return true;
   }
 
+  /// The id of the message a delivery (a message, a receipt for one, or a
+  /// history copy of one) is about.
+  static String _subjectId(Delivery d) =>
+      d.messageId.startsWith('receipt:') ||
+          d.messageId.startsWith(historyPrefix)
+      ? d.messageId.split(':')[1]
+      : d.messageId;
+
   /// Whether this delivery (a message, or a receipt for one) belongs to a
   /// private channel.
   Future<bool> _isPrivate(Delivery d) async {
-    final id =
-        d.messageId.startsWith('receipt:') ||
-            d.messageId.startsWith(historyPrefix)
-        ? d.messageId.split(':')[1]
-        : d.messageId;
-    final q = db.select(db.channels).join([
-      innerJoin(db.messages, db.messages.channelId.equalsExp(db.channels.id)),
-    ])..where(db.messages.id.equals(id) & db.channels.kind.equals('private'));
+    final q =
+        db.select(db.channels).join([
+          innerJoin(
+            db.messages,
+            db.messages.channelId.equalsExp(db.channels.id),
+          ),
+        ])..where(
+          db.messages.id.equals(_subjectId(d)) &
+              db.channels.kind.equals('private'),
+        );
     return (await q.get()).isNotEmpty;
+  }
+
+  /// Whether a refused surat message may yet be taken: here the surat is
+  /// still open and both I and [to] are current members, so the refusal
+  /// means [to] hasn't applied my seating yet.
+  Future<bool> _mayStillSeat(Delivery d, String to) async {
+    final msg = await (db.select(
+      db.messages,
+    )..where((m) => m.id.equals(_subjectId(d)))).getSingleOrNull();
+    if (msg == null) return false;
+    final channel = await (db.select(
+      db.channels,
+    )..where((c) => c.id.equals(msg.channelId))).getSingleOrNull();
+    if (channel == null ||
+        channel.kind != 'surat' ||
+        channel.closedAt != null) {
+      return false;
+    }
+    final current =
+        await (db.select(db.channelMembers)..where(
+              (m) =>
+                  m.channelId.equals(channel.id) &
+                  m.deviceId.isIn([messages.myDeviceId, to]) &
+                  m.state.equals('member') &
+                  m.leftHlc.isNull(),
+            ))
+            .get();
+    return current.length == 2;
   }
 
   static String? _pathOf(Delivery d) =>

@@ -553,6 +553,42 @@ void main() {
       await worker.runOnce();
       expect((await delivery(id)).status, 'dropped');
     });
+
+    test('a 403 on a surat message backs off and retries: the sender\'s '
+        'seating event may still be on its way', () async {
+      await addSurat();
+      final id = await queuedSuratMessage();
+      net.next = 403;
+      await worker.runOnce();
+      final d = await delivery(id);
+      expect(
+        (d.status, d.attempts, d.nextAttemptAt, d.lastError),
+        ('queued', 1, now + 5000, 'not_a_member'),
+      );
+      now += 5000;
+      net.next = 200;
+      await worker.runOnce();
+      expect((await delivery(id)).status, 'delivered');
+    });
+
+    test(
+      'a 403 on a surat message drops once the recipient has left here',
+      () async {
+        await addSurat();
+        final id = await queuedSuratMessage();
+        await (db.update(
+          db.channelMembers,
+        )..where((m) => m.deviceId.equals(peerId))).write(
+          const ChannelMembersCompanion(
+            state: Value('left'),
+            leftHlc: Value('0000000000009-00000'),
+          ),
+        );
+        net.next = 403;
+        await worker.runOnce();
+        expect((await delivery(id)).status, 'dropped');
+      },
+    );
   });
 
   test('401 untrusted unpairs the peer and drops its queue', () async {
