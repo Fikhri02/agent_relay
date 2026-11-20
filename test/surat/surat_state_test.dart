@@ -249,6 +249,19 @@ void main() {
     expect(all.members['c']!.state, MemberState.declined);
   });
 
+  test('last member leaving with invites pending ends the surat; a later '
+      'accept is ignored', () {
+    final s = replay([
+      create(1, 'a', ['b', 'c']),
+      leave(2, 'a'),
+      accept(3, 'b'),
+    ]);
+    expect(s.ended, isTrue);
+    expect(s.members['a']!.state, MemberState.left);
+    expect(s.members['b']!.state, MemberState.invited);
+    expect(s.approvals['b'], isNull);
+  });
+
   test('invite by a non-member and accept by a non-invitee are ignored', () {
     final base = [
       create(1, 'a', ['b']),

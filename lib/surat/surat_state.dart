@@ -280,10 +280,16 @@ class _Fold {
       case RenameEvent(name: final newName):
         if (from == renamer && newName.isNotEmpty) name = newName;
     }
+    // Ends with nobody left as a member, or with one member alone after the
+    // surat has seen an accept, decline_invite or leave.
+    final memberCount = members.values
+        .where((m) => m.state == MemberState.member)
+        .length;
     ended =
-        settled &&
-        !members.values.any((m) => m.state == MemberState.invited) &&
-        members.values.where((m) => m.state == MemberState.member).length == 1;
+        memberCount == 0 ||
+        (settled &&
+            memberCount == 1 &&
+            !members.values.any((m) => m.state == MemberState.invited));
   }
 
   void create(String hlc, String creator, CreateEvent event) {
