@@ -222,17 +222,17 @@ void main() {
       body: {'body': 'mine'},
     );
     await call('POST', '/outbox/${b1['id']}/approve');
-    // An incoming message from Xavier, seq 2 (seq 1 missing → gap).
+    // Incoming from Xavier: seq 2 and 4 (seq 3 missing → gap).
     final sealedFor =
         await IdentityKeys.generate(); // not our key: stored locked
-    final env = Envelope.fromJson({
-      'id': 'in1',
+    Envelope locked(String id, int seq, int hlcMs) => Envelope.fromJson({
+      'id': id,
       'channelId': ch,
       'kind': 'message',
       'from': xavierId,
       'sentAt': now,
-      'hlc': '${now + 30000}-00000',
-      'seq': 2,
+      'hlc': '${now + hlcMs}-00000',
+      'seq': seq,
       'sealed': {
         'eph': base64.encode(sealedFor.boxPub),
         'nonce': base64.encode(List.filled(12, 0)),
@@ -240,12 +240,15 @@ void main() {
         'mac': base64.encode(List.filled(16, 0)),
       },
     });
-    await svc.receive(env, from: await db.select(db.peers).getSingle());
+    final xavier = await db.select(db.peers).getSingle();
+    await svc.receive(locked('in1', 2, 30000), from: xavier);
+    // seq 3 never arrives: gaps count from the first stored seq.
+    await svc.receive(locked('in2', 4, 40000), from: xavier);
 
     final (s, body) = await call('GET', '/channels/$ch/messages?status=all');
     expect(s, 200);
     final msgs = body['messages'] as List;
-    expect(msgs.map((m) => m['id']), [b1['id'], 'in1']);
+    expect(msgs.map((m) => m['id']), [b1['id'], 'in1', 'in2']);
     expect(msgs.first['direction'], 'out');
     expect(msgs.first['from'], {'deviceId': myId, 'personName': 'Irfan'});
     expect(msgs.first['receipts'].single, {

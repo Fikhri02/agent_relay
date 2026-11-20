@@ -25,7 +25,28 @@ class RelayDatabase extends _$RelayDatabase {
       RelayDatabase(NativeDatabase.createInBackground(file));
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
+
+  @override
+  MigrationStrategy get migration => MigrationStrategy(
+    onCreate: (m) => m.createAll(),
+    onUpgrade: (m, from, to) async {
+      if (from < 2) {
+        await m.addColumn(channelMembers, channelMembers.state);
+        await m.addColumn(channelMembers, channelMembers.inviterDeviceId);
+        await m.addColumn(channelMembers, channelMembers.myApproval);
+        await m.addColumn(channelMembers, channelMembers.theirApproval);
+        await m.addColumn(channelMembers, channelMembers.personName);
+        await m.addColumn(channelMembers, channelMembers.deviceName);
+        // Existing members all come from private channels, paired on both
+        // sides, so each has approved the other.
+        await customStatement(
+          "UPDATE channel_members SET state = 'member', "
+          "my_approval = 'approved', their_approval = 'approved'",
+        );
+      }
+    },
+  );
 
   /// Incoming, readable, and not yet read by [by]: `seenAt` for the person,
   /// `agentReadAt` for the agent. Locked messages never count as unread.
@@ -64,18 +85,24 @@ class RelayDatabase extends _$RelayDatabase {
     };
   }
 
-  /// Per incoming sender in the channel: max seq − count of distinct seqs.
-  /// Only senders with at least one missing message are returned, ordered by
-  /// device id.
+  /// Per incoming sender in the channel: (max seq − min seq + 1) − count of
+  /// distinct seqs, so counting starts at the sender's first stored message.
+  /// Event rows are ignored. Only senders with at least one missing message
+  /// are returned, ordered by device id.
   Future<List<({String fromDeviceId, int missing})>> gaps(
     String channelId,
   ) async {
-    final missing = messages.seq.max() - messages.seq.count(distinct: true);
+    final missing =
+        messages.seq.max() -
+        messages.seq.min() +
+        const Constant<int>(1) -
+        messages.seq.count(distinct: true);
     final q = selectOnly(messages)
       ..addColumns([messages.fromDeviceId, missing])
       ..where(
         messages.channelId.equals(channelId) &
             messages.direction.equals('in') &
+            messages.kind.equals('event').not() &
             messages.seq.isNotNull(),
       )
       ..groupBy([messages.fromDeviceId], having: missing.isBiggerThanValue(0))
@@ -108,6 +135,26 @@ class RelayDatabase extends _$RelayDatabase {
     final row = await into(messages)
         .insertReturningOrNull(m, onConflict: DoNothing());
     return row != null;
+  }
+
+  /// Inserts [m], or fills an existing row with the same id when that row is
+  /// still a `locked` placeholder (body, context, reply and status). A
+  /// readable row is never overwritten. Returns true when it wrote.
+  Future<bool> insertOrUnlock(MessagesCompanion m) async {
+    if (await insertIncomingIfNew(m)) return true;
+    final filled =
+        await (update(messages)..where(
+              (x) => x.id.equals(m.id.value) & x.status.equals('locked'),
+            ))
+            .write(
+              MessagesCompanion(
+                body: m.body,
+                contextJson: m.contextJson,
+                replyTo: m.replyTo,
+                status: m.status,
+              ),
+            );
+    return filled > 0;
   }
 
   /// Queued deliveries whose `nextAttemptAt` is at or before [nowMs], oldest

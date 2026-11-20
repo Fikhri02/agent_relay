@@ -14,6 +14,7 @@ class Envelope {
     required this.seq,
     required this.sealed,
     this.replyTo,
+    this.history = false,
   });
 
   final String id;
@@ -24,10 +25,22 @@ class Envelope {
   final String hlc;
   final int seq;
   final String? replyTo;
-  final SealedEnvelope sealed;
+
+  /// Null for a locked placeholder (a message sent before the recipient
+  /// joined; only its header is shared).
+  final SealedEnvelope? sealed;
+
+  /// True when this is a backfill of earlier history, not live traffic.
+  final bool history;
 
   /// Binds the cleartext header to the ciphertext: any change fails to open.
-  List<int> get aad => utf8.encode('$id|$channelId|$from|$hlc|$seq');
+  /// Messages keep the Phase 1 string so 1.0.x peers still open them; events
+  /// add their kind.
+  List<int> get aad => utf8.encode(
+    kind == 'message'
+        ? '$id|$channelId|$from|$hlc|$seq'
+        : '$id|$channelId|$kind|$from|$hlc|$seq',
+  );
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -38,7 +51,8 @@ class Envelope {
     'hlc': hlc,
     'seq': seq,
     if (replyTo != null) 'replyTo': replyTo,
-    'sealed': sealed.toJson(),
+    if (history) 'history': true,
+    'sealed': sealed?.toJson(),
   };
 
   factory Envelope.fromJson(Map<String, dynamic> j) => Envelope(
@@ -50,8 +64,9 @@ class Envelope {
     hlc: j['hlc'] as String,
     seq: j['seq'] as int,
     replyTo: j['replyTo'] as String?,
-    sealed: SealedEnvelope.fromJson(
-      (j['sealed'] as Map).cast<String, dynamic>(),
-    ),
+    history: j['history'] as bool? ?? false,
+    sealed: j['sealed'] == null
+        ? null
+        : SealedEnvelope.fromJson((j['sealed'] as Map).cast<String, dynamic>()),
   );
 }

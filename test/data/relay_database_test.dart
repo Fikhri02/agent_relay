@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:agent_relay/data/relay_database.dart';
+import 'package:sqlite3/sqlite3.dart' as sql;
 import 'package:drift/drift.dart' hide isNull, isNotNull;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -144,8 +147,10 @@ void main() {
         );
       });
 
-      Future<List<String>> ids(Reader by) async =>
-          (await db.channelMessages('ch', unreadBy: by)).map((m) => m.id).toList();
+      Future<List<String>> ids(Reader by) async => (await db.channelMessages(
+        'ch',
+        unreadBy: by,
+      )).map((m) => m.id).toList();
 
       test('agent: still unread after the person saw it in the app', () async {
         expect(await ids(Reader.agent), ['a', 'b']);
@@ -271,5 +276,135 @@ void main() {
     expect(peer.signPub, [1, 2, 3]);
     expect(peer.boxPub, [4, 5, 6]);
     expect(peer.lastSeenAt, isNull);
+  });
+
+  test('gaps start at a sender\'s first stored seq', () async {
+    await insert(id: 'x41', from: 'x', seq: 41);
+    await insert(id: 'x42', from: 'x', seq: 42);
+    await insert(id: 'x44', from: 'x', seq: 44);
+    expect(await db.gaps('ch'), [(fromDeviceId: 'x', missing: 1)]);
+  });
+
+  test('gaps ignore event rows', () async {
+    await insert(id: 'x1', from: 'x', seq: 1);
+    await db
+        .into(db.messages)
+        .insert(
+          MessagesCompanion.insert(
+            id: 'ev9',
+            channelId: 'ch',
+            kind: 'event',
+            fromDeviceId: 'x',
+            sentAt: 1,
+            hlc: const Value('0000000001000-00000'),
+            seq: const Value(9),
+            direction: 'in',
+            status: 'read',
+            createdAt: 1,
+          ),
+        );
+    expect(await db.gaps('ch'), isEmpty);
+  });
+
+  test('insertOrUnlock fills a locked placeholder and never overwrites a '
+      'readable row', () async {
+    await db
+        .into(db.messages)
+        .insert(
+          MessagesCompanion.insert(
+            id: 'm1',
+            channelId: 'ch',
+            kind: 'message',
+            fromDeviceId: 'x',
+            sentAt: 1,
+            direction: 'in',
+            status: 'locked',
+            createdAt: 1,
+          ),
+        );
+    MessagesCompanion fill(String body) => MessagesCompanion.insert(
+      id: 'm1',
+      channelId: 'ch',
+      kind: 'message',
+      fromDeviceId: 'x',
+      sentAt: 1,
+      body: Value(body),
+      direction: 'in',
+      status: 'unread',
+      createdAt: 2,
+    );
+    expect(await db.insertOrUnlock(fill('hi')), isTrue);
+    var row = await (db.select(
+      db.messages,
+    )..where((m) => m.id.equals('m1'))).getSingle();
+    expect(row.body, 'hi');
+    expect(row.status, 'unread');
+    expect(await db.insertOrUnlock(fill('other')), isFalse);
+    row = await (db.select(
+      db.messages,
+    )..where((m) => m.id.equals('m1'))).getSingle();
+    expect(row.body, 'hi');
+    // a brand-new id is inserted
+    expect(
+      await db.insertOrUnlock(fill('new').copyWith(id: const Value('m2'))),
+      isTrue,
+    );
+  });
+
+  test('migration v1 to v2 keeps rows and marks private members mutually '
+      'approved', () async {
+    final dir = await Directory.systemTemp.createTemp('agent_relay_mig');
+    addTearDown(() => dir.delete(recursive: true));
+    final file = File('${dir.path}/relay.sqlite');
+    final raw = sql.sqlite3.open(file.path);
+    raw.execute('''
+CREATE TABLE channels (
+  id TEXT NOT NULL, kind TEXT NOT NULL, name TEXT NULL,
+  created_at INTEGER NOT NULL, closed_at INTEGER NULL,
+  creator_device_id TEXT NULL, PRIMARY KEY (id));
+CREATE TABLE channel_members (
+  channel_id TEXT NOT NULL, device_id TEXT NOT NULL,
+  joined_hlc TEXT NOT NULL, left_hlc TEXT NULL,
+  PRIMARY KEY (channel_id, device_id));
+CREATE TABLE peers (
+  device_id TEXT NOT NULL, person_name TEXT NOT NULL,
+  device_name TEXT NOT NULL, sign_pub BLOB NOT NULL, box_pub BLOB NOT NULL,
+  cert_fingerprint TEXT NOT NULL, trust TEXT NOT NULL,
+  last_address TEXT NULL, last_port INTEGER NULL, last_seen_at INTEGER NULL,
+  clock_skew_ms INTEGER NULL, paired_at INTEGER NOT NULL,
+  PRIMARY KEY (device_id));
+CREATE TABLE messages (
+  id TEXT NOT NULL, channel_id TEXT NOT NULL, kind TEXT NOT NULL,
+  from_device_id TEXT NOT NULL, sent_at INTEGER NOT NULL, hlc TEXT NULL,
+  seq INTEGER NULL, body TEXT NULL, context_json TEXT NULL,
+  reply_to TEXT NULL, direction TEXT NOT NULL, status TEXT NOT NULL,
+  arrived_late INTEGER NOT NULL DEFAULT 0
+    CHECK (arrived_late IN (0, 1)),
+  created_at INTEGER NOT NULL, received_at INTEGER NULL,
+  seen_at INTEGER NULL, agent_read_at INTEGER NULL, PRIMARY KEY (id));
+CREATE INDEX messages_channel_hlc ON messages (channel_id, hlc);
+CREATE TABLE deliveries (
+  message_id TEXT NOT NULL, recipient_device_id TEXT NOT NULL,
+  envelope_json TEXT NOT NULL, status TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL, last_error TEXT NULL,
+  delivered_at INTEGER NULL, seen_at INTEGER NULL,
+  agent_read_at INTEGER NULL, PRIMARY KEY (message_id, recipient_device_id));
+INSERT INTO channels (id, kind, created_at) VALUES ('c1', 'private', 1);
+INSERT INTO channel_members (channel_id, device_id, joined_hlc)
+  VALUES ('c1', 'd1', '0000000001000-00000');
+PRAGMA user_version = 1;
+''');
+    raw.close();
+
+    final migrated = RelayDatabase(NativeDatabase(file));
+    addTearDown(migrated.close);
+    final row = await migrated.select(migrated.channelMembers).getSingle();
+    expect(row.deviceId, 'd1');
+    expect(row.state, 'member');
+    expect(row.myApproval, 'approved');
+    expect(row.theirApproval, 'approved');
+    expect(row.inviterDeviceId, isNull);
+    expect(row.personName, isNull);
   });
 }

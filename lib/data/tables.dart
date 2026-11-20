@@ -42,6 +42,19 @@ class ChannelMembers extends Table {
   TextColumn get joinedHlc => text()();
   TextColumn get leftHlc => text().nullable()();
 
+  /// `invited` | `member` | `left` | `declined`.
+  TextColumn get state => text().withDefault(const Constant('member'))();
+  TextColumn get inviterDeviceId => text().nullable()();
+
+  /// `approved` | `declined`; null = undecided. [myApproval] is my decision
+  /// about this member, [theirApproval] is theirs about me.
+  TextColumn get myApproval => text().nullable()();
+  TextColumn get theirApproval => text().nullable()();
+
+  /// Display names for members who are not peers yet.
+  TextColumn get personName => text().nullable()();
+  TextColumn get deviceName => text().nullable()();
+
   @override
   Set<Column> get primaryKey => {channelId, deviceId};
 }

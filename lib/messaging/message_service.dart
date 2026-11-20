@@ -254,9 +254,11 @@ class MessageService {
     String? body;
     String? contextJson;
     var status = 'unread';
+    final sealed = e.sealed;
     try {
+      if (sealed == null) throw const BadEnvelope('placeholder');
       final plain = jsonDecode(
-        utf8.decode(await open(e.sealed, recipientBox: myBox, aad: e.aad)),
+        utf8.decode(await open(sealed, recipientBox: myBox, aad: e.aad)),
       ) as Map;
       body = plain['body'] as String?;
       contextJson = plain['context'] == null

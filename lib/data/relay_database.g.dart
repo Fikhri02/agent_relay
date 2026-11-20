@@ -1198,12 +1198,83 @@ class $ChannelMembersTable extends ChannelMembers
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _stateMeta = const VerificationMeta('state');
+  @override
+  late final GeneratedColumn<String> state = GeneratedColumn<String>(
+    'state',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('member'),
+  );
+  static const VerificationMeta _inviterDeviceIdMeta = const VerificationMeta(
+    'inviterDeviceId',
+  );
+  @override
+  late final GeneratedColumn<String> inviterDeviceId = GeneratedColumn<String>(
+    'inviter_device_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _myApprovalMeta = const VerificationMeta(
+    'myApproval',
+  );
+  @override
+  late final GeneratedColumn<String> myApproval = GeneratedColumn<String>(
+    'my_approval',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _theirApprovalMeta = const VerificationMeta(
+    'theirApproval',
+  );
+  @override
+  late final GeneratedColumn<String> theirApproval = GeneratedColumn<String>(
+    'their_approval',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _personNameMeta = const VerificationMeta(
+    'personName',
+  );
+  @override
+  late final GeneratedColumn<String> personName = GeneratedColumn<String>(
+    'person_name',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _deviceNameMeta = const VerificationMeta(
+    'deviceName',
+  );
+  @override
+  late final GeneratedColumn<String> deviceName = GeneratedColumn<String>(
+    'device_name',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     channelId,
     deviceId,
     joinedHlc,
     leftHlc,
+    state,
+    inviterDeviceId,
+    myApproval,
+    theirApproval,
+    personName,
+    deviceName,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -1247,6 +1318,48 @@ class $ChannelMembersTable extends ChannelMembers
         leftHlc.isAcceptableOrUnknown(data['left_hlc']!, _leftHlcMeta),
       );
     }
+    if (data.containsKey('state')) {
+      context.handle(
+        _stateMeta,
+        state.isAcceptableOrUnknown(data['state']!, _stateMeta),
+      );
+    }
+    if (data.containsKey('inviter_device_id')) {
+      context.handle(
+        _inviterDeviceIdMeta,
+        inviterDeviceId.isAcceptableOrUnknown(
+          data['inviter_device_id']!,
+          _inviterDeviceIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('my_approval')) {
+      context.handle(
+        _myApprovalMeta,
+        myApproval.isAcceptableOrUnknown(data['my_approval']!, _myApprovalMeta),
+      );
+    }
+    if (data.containsKey('their_approval')) {
+      context.handle(
+        _theirApprovalMeta,
+        theirApproval.isAcceptableOrUnknown(
+          data['their_approval']!,
+          _theirApprovalMeta,
+        ),
+      );
+    }
+    if (data.containsKey('person_name')) {
+      context.handle(
+        _personNameMeta,
+        personName.isAcceptableOrUnknown(data['person_name']!, _personNameMeta),
+      );
+    }
+    if (data.containsKey('device_name')) {
+      context.handle(
+        _deviceNameMeta,
+        deviceName.isAcceptableOrUnknown(data['device_name']!, _deviceNameMeta),
+      );
+    }
     return context;
   }
 
@@ -1272,6 +1385,30 @@ class $ChannelMembersTable extends ChannelMembers
         DriftSqlType.string,
         data['${effectivePrefix}left_hlc'],
       ),
+      state: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}state'],
+      )!,
+      inviterDeviceId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}inviter_device_id'],
+      ),
+      myApproval: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}my_approval'],
+      ),
+      theirApproval: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}their_approval'],
+      ),
+      personName: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}person_name'],
+      ),
+      deviceName: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}device_name'],
+      ),
     );
   }
 
@@ -1286,11 +1423,30 @@ class ChannelMember extends DataClass implements Insertable<ChannelMember> {
   final String deviceId;
   final String joinedHlc;
   final String? leftHlc;
+
+  /// `invited` | `member` | `left` | `declined`.
+  final String state;
+  final String? inviterDeviceId;
+
+  /// `approved` | `declined`; null = undecided. [myApproval] is my decision
+  /// about this member, [theirApproval] is theirs about me.
+  final String? myApproval;
+  final String? theirApproval;
+
+  /// Display names for members who are not peers yet.
+  final String? personName;
+  final String? deviceName;
   const ChannelMember({
     required this.channelId,
     required this.deviceId,
     required this.joinedHlc,
     this.leftHlc,
+    required this.state,
+    this.inviterDeviceId,
+    this.myApproval,
+    this.theirApproval,
+    this.personName,
+    this.deviceName,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -1300,6 +1456,22 @@ class ChannelMember extends DataClass implements Insertable<ChannelMember> {
     map['joined_hlc'] = Variable<String>(joinedHlc);
     if (!nullToAbsent || leftHlc != null) {
       map['left_hlc'] = Variable<String>(leftHlc);
+    }
+    map['state'] = Variable<String>(state);
+    if (!nullToAbsent || inviterDeviceId != null) {
+      map['inviter_device_id'] = Variable<String>(inviterDeviceId);
+    }
+    if (!nullToAbsent || myApproval != null) {
+      map['my_approval'] = Variable<String>(myApproval);
+    }
+    if (!nullToAbsent || theirApproval != null) {
+      map['their_approval'] = Variable<String>(theirApproval);
+    }
+    if (!nullToAbsent || personName != null) {
+      map['person_name'] = Variable<String>(personName);
+    }
+    if (!nullToAbsent || deviceName != null) {
+      map['device_name'] = Variable<String>(deviceName);
     }
     return map;
   }
@@ -1312,6 +1484,22 @@ class ChannelMember extends DataClass implements Insertable<ChannelMember> {
       leftHlc: leftHlc == null && nullToAbsent
           ? const Value.absent()
           : Value(leftHlc),
+      state: Value(state),
+      inviterDeviceId: inviterDeviceId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(inviterDeviceId),
+      myApproval: myApproval == null && nullToAbsent
+          ? const Value.absent()
+          : Value(myApproval),
+      theirApproval: theirApproval == null && nullToAbsent
+          ? const Value.absent()
+          : Value(theirApproval),
+      personName: personName == null && nullToAbsent
+          ? const Value.absent()
+          : Value(personName),
+      deviceName: deviceName == null && nullToAbsent
+          ? const Value.absent()
+          : Value(deviceName),
     );
   }
 
@@ -1325,6 +1513,12 @@ class ChannelMember extends DataClass implements Insertable<ChannelMember> {
       deviceId: serializer.fromJson<String>(json['deviceId']),
       joinedHlc: serializer.fromJson<String>(json['joinedHlc']),
       leftHlc: serializer.fromJson<String?>(json['leftHlc']),
+      state: serializer.fromJson<String>(json['state']),
+      inviterDeviceId: serializer.fromJson<String?>(json['inviterDeviceId']),
+      myApproval: serializer.fromJson<String?>(json['myApproval']),
+      theirApproval: serializer.fromJson<String?>(json['theirApproval']),
+      personName: serializer.fromJson<String?>(json['personName']),
+      deviceName: serializer.fromJson<String?>(json['deviceName']),
     );
   }
   @override
@@ -1335,6 +1529,12 @@ class ChannelMember extends DataClass implements Insertable<ChannelMember> {
       'deviceId': serializer.toJson<String>(deviceId),
       'joinedHlc': serializer.toJson<String>(joinedHlc),
       'leftHlc': serializer.toJson<String?>(leftHlc),
+      'state': serializer.toJson<String>(state),
+      'inviterDeviceId': serializer.toJson<String?>(inviterDeviceId),
+      'myApproval': serializer.toJson<String?>(myApproval),
+      'theirApproval': serializer.toJson<String?>(theirApproval),
+      'personName': serializer.toJson<String?>(personName),
+      'deviceName': serializer.toJson<String?>(deviceName),
     };
   }
 
@@ -1343,11 +1543,27 @@ class ChannelMember extends DataClass implements Insertable<ChannelMember> {
     String? deviceId,
     String? joinedHlc,
     Value<String?> leftHlc = const Value.absent(),
+    String? state,
+    Value<String?> inviterDeviceId = const Value.absent(),
+    Value<String?> myApproval = const Value.absent(),
+    Value<String?> theirApproval = const Value.absent(),
+    Value<String?> personName = const Value.absent(),
+    Value<String?> deviceName = const Value.absent(),
   }) => ChannelMember(
     channelId: channelId ?? this.channelId,
     deviceId: deviceId ?? this.deviceId,
     joinedHlc: joinedHlc ?? this.joinedHlc,
     leftHlc: leftHlc.present ? leftHlc.value : this.leftHlc,
+    state: state ?? this.state,
+    inviterDeviceId: inviterDeviceId.present
+        ? inviterDeviceId.value
+        : this.inviterDeviceId,
+    myApproval: myApproval.present ? myApproval.value : this.myApproval,
+    theirApproval: theirApproval.present
+        ? theirApproval.value
+        : this.theirApproval,
+    personName: personName.present ? personName.value : this.personName,
+    deviceName: deviceName.present ? deviceName.value : this.deviceName,
   );
   ChannelMember copyWithCompanion(ChannelMembersCompanion data) {
     return ChannelMember(
@@ -1355,6 +1571,22 @@ class ChannelMember extends DataClass implements Insertable<ChannelMember> {
       deviceId: data.deviceId.present ? data.deviceId.value : this.deviceId,
       joinedHlc: data.joinedHlc.present ? data.joinedHlc.value : this.joinedHlc,
       leftHlc: data.leftHlc.present ? data.leftHlc.value : this.leftHlc,
+      state: data.state.present ? data.state.value : this.state,
+      inviterDeviceId: data.inviterDeviceId.present
+          ? data.inviterDeviceId.value
+          : this.inviterDeviceId,
+      myApproval: data.myApproval.present
+          ? data.myApproval.value
+          : this.myApproval,
+      theirApproval: data.theirApproval.present
+          ? data.theirApproval.value
+          : this.theirApproval,
+      personName: data.personName.present
+          ? data.personName.value
+          : this.personName,
+      deviceName: data.deviceName.present
+          ? data.deviceName.value
+          : this.deviceName,
     );
   }
 
@@ -1364,13 +1596,30 @@ class ChannelMember extends DataClass implements Insertable<ChannelMember> {
           ..write('channelId: $channelId, ')
           ..write('deviceId: $deviceId, ')
           ..write('joinedHlc: $joinedHlc, ')
-          ..write('leftHlc: $leftHlc')
+          ..write('leftHlc: $leftHlc, ')
+          ..write('state: $state, ')
+          ..write('inviterDeviceId: $inviterDeviceId, ')
+          ..write('myApproval: $myApproval, ')
+          ..write('theirApproval: $theirApproval, ')
+          ..write('personName: $personName, ')
+          ..write('deviceName: $deviceName')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(channelId, deviceId, joinedHlc, leftHlc);
+  int get hashCode => Object.hash(
+    channelId,
+    deviceId,
+    joinedHlc,
+    leftHlc,
+    state,
+    inviterDeviceId,
+    myApproval,
+    theirApproval,
+    personName,
+    deviceName,
+  );
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -1378,7 +1627,13 @@ class ChannelMember extends DataClass implements Insertable<ChannelMember> {
           other.channelId == this.channelId &&
           other.deviceId == this.deviceId &&
           other.joinedHlc == this.joinedHlc &&
-          other.leftHlc == this.leftHlc);
+          other.leftHlc == this.leftHlc &&
+          other.state == this.state &&
+          other.inviterDeviceId == this.inviterDeviceId &&
+          other.myApproval == this.myApproval &&
+          other.theirApproval == this.theirApproval &&
+          other.personName == this.personName &&
+          other.deviceName == this.deviceName);
 }
 
 class ChannelMembersCompanion extends UpdateCompanion<ChannelMember> {
@@ -1386,12 +1641,24 @@ class ChannelMembersCompanion extends UpdateCompanion<ChannelMember> {
   final Value<String> deviceId;
   final Value<String> joinedHlc;
   final Value<String?> leftHlc;
+  final Value<String> state;
+  final Value<String?> inviterDeviceId;
+  final Value<String?> myApproval;
+  final Value<String?> theirApproval;
+  final Value<String?> personName;
+  final Value<String?> deviceName;
   final Value<int> rowid;
   const ChannelMembersCompanion({
     this.channelId = const Value.absent(),
     this.deviceId = const Value.absent(),
     this.joinedHlc = const Value.absent(),
     this.leftHlc = const Value.absent(),
+    this.state = const Value.absent(),
+    this.inviterDeviceId = const Value.absent(),
+    this.myApproval = const Value.absent(),
+    this.theirApproval = const Value.absent(),
+    this.personName = const Value.absent(),
+    this.deviceName = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   ChannelMembersCompanion.insert({
@@ -1399,6 +1666,12 @@ class ChannelMembersCompanion extends UpdateCompanion<ChannelMember> {
     required String deviceId,
     required String joinedHlc,
     this.leftHlc = const Value.absent(),
+    this.state = const Value.absent(),
+    this.inviterDeviceId = const Value.absent(),
+    this.myApproval = const Value.absent(),
+    this.theirApproval = const Value.absent(),
+    this.personName = const Value.absent(),
+    this.deviceName = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : channelId = Value(channelId),
        deviceId = Value(deviceId),
@@ -1408,6 +1681,12 @@ class ChannelMembersCompanion extends UpdateCompanion<ChannelMember> {
     Expression<String>? deviceId,
     Expression<String>? joinedHlc,
     Expression<String>? leftHlc,
+    Expression<String>? state,
+    Expression<String>? inviterDeviceId,
+    Expression<String>? myApproval,
+    Expression<String>? theirApproval,
+    Expression<String>? personName,
+    Expression<String>? deviceName,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -1415,6 +1694,12 @@ class ChannelMembersCompanion extends UpdateCompanion<ChannelMember> {
       if (deviceId != null) 'device_id': deviceId,
       if (joinedHlc != null) 'joined_hlc': joinedHlc,
       if (leftHlc != null) 'left_hlc': leftHlc,
+      if (state != null) 'state': state,
+      if (inviterDeviceId != null) 'inviter_device_id': inviterDeviceId,
+      if (myApproval != null) 'my_approval': myApproval,
+      if (theirApproval != null) 'their_approval': theirApproval,
+      if (personName != null) 'person_name': personName,
+      if (deviceName != null) 'device_name': deviceName,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -1424,6 +1709,12 @@ class ChannelMembersCompanion extends UpdateCompanion<ChannelMember> {
     Value<String>? deviceId,
     Value<String>? joinedHlc,
     Value<String?>? leftHlc,
+    Value<String>? state,
+    Value<String?>? inviterDeviceId,
+    Value<String?>? myApproval,
+    Value<String?>? theirApproval,
+    Value<String?>? personName,
+    Value<String?>? deviceName,
     Value<int>? rowid,
   }) {
     return ChannelMembersCompanion(
@@ -1431,6 +1722,12 @@ class ChannelMembersCompanion extends UpdateCompanion<ChannelMember> {
       deviceId: deviceId ?? this.deviceId,
       joinedHlc: joinedHlc ?? this.joinedHlc,
       leftHlc: leftHlc ?? this.leftHlc,
+      state: state ?? this.state,
+      inviterDeviceId: inviterDeviceId ?? this.inviterDeviceId,
+      myApproval: myApproval ?? this.myApproval,
+      theirApproval: theirApproval ?? this.theirApproval,
+      personName: personName ?? this.personName,
+      deviceName: deviceName ?? this.deviceName,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -1450,6 +1747,24 @@ class ChannelMembersCompanion extends UpdateCompanion<ChannelMember> {
     if (leftHlc.present) {
       map['left_hlc'] = Variable<String>(leftHlc.value);
     }
+    if (state.present) {
+      map['state'] = Variable<String>(state.value);
+    }
+    if (inviterDeviceId.present) {
+      map['inviter_device_id'] = Variable<String>(inviterDeviceId.value);
+    }
+    if (myApproval.present) {
+      map['my_approval'] = Variable<String>(myApproval.value);
+    }
+    if (theirApproval.present) {
+      map['their_approval'] = Variable<String>(theirApproval.value);
+    }
+    if (personName.present) {
+      map['person_name'] = Variable<String>(personName.value);
+    }
+    if (deviceName.present) {
+      map['device_name'] = Variable<String>(deviceName.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -1463,6 +1778,12 @@ class ChannelMembersCompanion extends UpdateCompanion<ChannelMember> {
           ..write('deviceId: $deviceId, ')
           ..write('joinedHlc: $joinedHlc, ')
           ..write('leftHlc: $leftHlc, ')
+          ..write('state: $state, ')
+          ..write('inviterDeviceId: $inviterDeviceId, ')
+          ..write('myApproval: $myApproval, ')
+          ..write('theirApproval: $theirApproval, ')
+          ..write('personName: $personName, ')
+          ..write('deviceName: $deviceName, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -3713,6 +4034,12 @@ typedef $$ChannelMembersTableCreateCompanionBuilder =
       required String deviceId,
       required String joinedHlc,
       Value<String?> leftHlc,
+      Value<String> state,
+      Value<String?> inviterDeviceId,
+      Value<String?> myApproval,
+      Value<String?> theirApproval,
+      Value<String?> personName,
+      Value<String?> deviceName,
       Value<int> rowid,
     });
 typedef $$ChannelMembersTableUpdateCompanionBuilder =
@@ -3721,6 +4048,12 @@ typedef $$ChannelMembersTableUpdateCompanionBuilder =
       Value<String> deviceId,
       Value<String> joinedHlc,
       Value<String?> leftHlc,
+      Value<String> state,
+      Value<String?> inviterDeviceId,
+      Value<String?> myApproval,
+      Value<String?> theirApproval,
+      Value<String?> personName,
+      Value<String?> deviceName,
       Value<int> rowid,
     });
 
@@ -3750,6 +4083,36 @@ class $$ChannelMembersTableFilterComposer
 
   ColumnFilters<String> get leftHlc => $composableBuilder(
     column: $table.leftHlc,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get state => $composableBuilder(
+    column: $table.state,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get inviterDeviceId => $composableBuilder(
+    column: $table.inviterDeviceId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get myApproval => $composableBuilder(
+    column: $table.myApproval,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get theirApproval => $composableBuilder(
+    column: $table.theirApproval,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get personName => $composableBuilder(
+    column: $table.personName,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get deviceName => $composableBuilder(
+    column: $table.deviceName,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -3782,6 +4145,36 @@ class $$ChannelMembersTableOrderingComposer
     column: $table.leftHlc,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<String> get state => $composableBuilder(
+    column: $table.state,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get inviterDeviceId => $composableBuilder(
+    column: $table.inviterDeviceId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get myApproval => $composableBuilder(
+    column: $table.myApproval,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get theirApproval => $composableBuilder(
+    column: $table.theirApproval,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get personName => $composableBuilder(
+    column: $table.personName,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get deviceName => $composableBuilder(
+    column: $table.deviceName,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$ChannelMembersTableAnnotationComposer
@@ -3804,6 +4197,34 @@ class $$ChannelMembersTableAnnotationComposer
 
   GeneratedColumn<String> get leftHlc =>
       $composableBuilder(column: $table.leftHlc, builder: (column) => column);
+
+  GeneratedColumn<String> get state =>
+      $composableBuilder(column: $table.state, builder: (column) => column);
+
+  GeneratedColumn<String> get inviterDeviceId => $composableBuilder(
+    column: $table.inviterDeviceId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get myApproval => $composableBuilder(
+    column: $table.myApproval,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get theirApproval => $composableBuilder(
+    column: $table.theirApproval,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get personName => $composableBuilder(
+    column: $table.personName,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get deviceName => $composableBuilder(
+    column: $table.deviceName,
+    builder: (column) => column,
+  );
 }
 
 class $$ChannelMembersTableTableManager
@@ -3847,12 +4268,24 @@ class $$ChannelMembersTableTableManager
                 Value<String> deviceId = const Value.absent(),
                 Value<String> joinedHlc = const Value.absent(),
                 Value<String?> leftHlc = const Value.absent(),
+                Value<String> state = const Value.absent(),
+                Value<String?> inviterDeviceId = const Value.absent(),
+                Value<String?> myApproval = const Value.absent(),
+                Value<String?> theirApproval = const Value.absent(),
+                Value<String?> personName = const Value.absent(),
+                Value<String?> deviceName = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => ChannelMembersCompanion(
                 channelId: channelId,
                 deviceId: deviceId,
                 joinedHlc: joinedHlc,
                 leftHlc: leftHlc,
+                state: state,
+                inviterDeviceId: inviterDeviceId,
+                myApproval: myApproval,
+                theirApproval: theirApproval,
+                personName: personName,
+                deviceName: deviceName,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -3861,12 +4294,24 @@ class $$ChannelMembersTableTableManager
                 required String deviceId,
                 required String joinedHlc,
                 Value<String?> leftHlc = const Value.absent(),
+                Value<String> state = const Value.absent(),
+                Value<String?> inviterDeviceId = const Value.absent(),
+                Value<String?> myApproval = const Value.absent(),
+                Value<String?> theirApproval = const Value.absent(),
+                Value<String?> personName = const Value.absent(),
+                Value<String?> deviceName = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => ChannelMembersCompanion.insert(
                 channelId: channelId,
                 deviceId: deviceId,
                 joinedHlc: joinedHlc,
                 leftHlc: leftHlc,
+                state: state,
+                inviterDeviceId: inviterDeviceId,
+                myApproval: myApproval,
+                theirApproval: theirApproval,
+                personName: personName,
+                deviceName: deviceName,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0
