@@ -165,4 +165,85 @@ void main() {
       throwsA(isA<NotAllowed>()),
     );
   });
+
+  test('declining an invite publishes decline_invite to every other member and invitee', () async {
+    final draft = await alice.surat.draftCreate('Trip', [bob.id, carol.id]);
+    await alice.messages.approve(draft);
+    await deliver(alice, bob, draft);
+    final suratId = (await alice.message(draft)).channelId;
+    final id = 'invite:$suratId:${bob.id}';
+    expect((await bob.surat.pending()).map((i) => i.id), [id]);
+
+    await decide(bob, id, approve: false);
+
+    final sent = await lastEvent(bob);
+    expect(sent.status, 'queued');
+    expect(sent.hlc, isNotNull);
+    for (final to in [alice, carol]) {
+      expect(
+        (await bob.queuedFor(to, sent.id)).event,
+        isA<DeclineInviteEvent>(),
+        reason: to.name,
+      );
+    }
+    expect((await bob.member(suratId, bob.id))!.state, 'declined');
+    expect(await bob.surat.pending(), isEmpty);
+    expect(await bob.db.drafts(), isEmpty);
+  });
+
+  test(
+    'a newcomer decision from a device that is only invited is refused',
+    () async {
+      final draft = await alice.surat.draftCreate('Trip', [bob.id, carol.id]);
+      await alice.messages.approve(draft);
+      await deliver(alice, bob, draft);
+      final suratId = (await alice.message(draft)).channelId;
+      final before = (await bob.db.select(bob.db.messages).get()).length;
+      for (final approve in [true, false]) {
+        expect(
+          () => decide(bob, 'newcomer:$suratId:${carol.id}', approve: approve),
+          throwsA(isA<UnknownPending>()),
+        );
+      }
+      expect((await bob.db.select(bob.db.messages).get()).length, before);
+    },
+  );
+
+  test(
+    'the inviter has no newcomer decision about their own invitee',
+    () async {
+      final suratId = await carolInvitedByAlice();
+      final before = (await alice.db.select(alice.db.messages).get()).length;
+      for (final approve in [true, false]) {
+        expect(
+          () =>
+              decide(alice, 'newcomer:$suratId:${carol.id}', approve: approve),
+          throwsA(isA<UnknownPending>()),
+        );
+      }
+      expect((await alice.db.select(alice.db.messages).get()).length, before);
+    },
+  );
+
+  test(
+    'a newcomer decision in an ended surat is not allowed, even a repeat',
+    () async {
+      final suratId = await carolInvitedByAlice();
+      final id = 'newcomer:$suratId:${carol.id}';
+      await decide(bob, id, approve: false);
+      // The reducer never leaves a seated newcomer in an ended surat, so close
+      // the channel directly to exercise the guard.
+      await (bob.db.update(bob.db.channels)..where((c) => c.id.equals(suratId)))
+          .write(const ChannelsCompanion(closedAt: Value(1)));
+      final before = (await bob.db.select(bob.db.messages).get()).length;
+      for (final approve in [true, false]) {
+        expect(
+          () => decide(bob, id, approve: approve),
+          throwsA(isA<NotAllowed>()),
+        );
+      }
+      expect((await bob.db.select(bob.db.messages).get()).length, before);
+      expect(await bob.surat.pending(), isEmpty);
+    },
+  );
 }
