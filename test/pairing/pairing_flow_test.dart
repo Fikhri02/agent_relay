@@ -1,4 +1,3 @@
-import 'dart:async';
 
 import 'package:agent_relay/pairing/comparison_code.dart';
 import 'package:agent_relay/pairing/pairing_service.dart';

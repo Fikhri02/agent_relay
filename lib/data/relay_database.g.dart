@@ -1629,6 +1629,26 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
     type: DriftSqlType.int,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _seenAtMeta = const VerificationMeta('seenAt');
+  @override
+  late final GeneratedColumn<int> seenAt = GeneratedColumn<int>(
+    'seen_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _agentReadAtMeta = const VerificationMeta(
+    'agentReadAt',
+  );
+  @override
+  late final GeneratedColumn<int> agentReadAt = GeneratedColumn<int>(
+    'agent_read_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -1646,6 +1666,8 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
     arrivedLate,
     createdAt,
     receivedAt,
+    seenAt,
+    agentReadAt,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -1771,6 +1793,21 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
         receivedAt.isAcceptableOrUnknown(data['received_at']!, _receivedAtMeta),
       );
     }
+    if (data.containsKey('seen_at')) {
+      context.handle(
+        _seenAtMeta,
+        seenAt.isAcceptableOrUnknown(data['seen_at']!, _seenAtMeta),
+      );
+    }
+    if (data.containsKey('agent_read_at')) {
+      context.handle(
+        _agentReadAtMeta,
+        agentReadAt.isAcceptableOrUnknown(
+          data['agent_read_at']!,
+          _agentReadAtMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -1840,6 +1877,14 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
         DriftSqlType.int,
         data['${effectivePrefix}received_at'],
       ),
+      seenAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}seen_at'],
+      ),
+      agentReadAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}agent_read_at'],
+      ),
     );
   }
 
@@ -1865,6 +1910,11 @@ class Message extends DataClass implements Insertable<Message> {
   final bool arrivedLate;
   final int createdAt;
   final int? receivedAt;
+
+  /// Receiver side: when this person saw it in the app / their agent read it
+  /// through the local API. Each sends one receipt back.
+  final int? seenAt;
+  final int? agentReadAt;
   const Message({
     required this.id,
     required this.channelId,
@@ -1881,6 +1931,8 @@ class Message extends DataClass implements Insertable<Message> {
     required this.arrivedLate,
     required this.createdAt,
     this.receivedAt,
+    this.seenAt,
+    this.agentReadAt,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -1912,6 +1964,12 @@ class Message extends DataClass implements Insertable<Message> {
     if (!nullToAbsent || receivedAt != null) {
       map['received_at'] = Variable<int>(receivedAt);
     }
+    if (!nullToAbsent || seenAt != null) {
+      map['seen_at'] = Variable<int>(seenAt);
+    }
+    if (!nullToAbsent || agentReadAt != null) {
+      map['agent_read_at'] = Variable<int>(agentReadAt);
+    }
     return map;
   }
 
@@ -1938,6 +1996,12 @@ class Message extends DataClass implements Insertable<Message> {
       receivedAt: receivedAt == null && nullToAbsent
           ? const Value.absent()
           : Value(receivedAt),
+      seenAt: seenAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(seenAt),
+      agentReadAt: agentReadAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(agentReadAt),
     );
   }
 
@@ -1962,6 +2026,8 @@ class Message extends DataClass implements Insertable<Message> {
       arrivedLate: serializer.fromJson<bool>(json['arrivedLate']),
       createdAt: serializer.fromJson<int>(json['createdAt']),
       receivedAt: serializer.fromJson<int?>(json['receivedAt']),
+      seenAt: serializer.fromJson<int?>(json['seenAt']),
+      agentReadAt: serializer.fromJson<int?>(json['agentReadAt']),
     );
   }
   @override
@@ -1983,6 +2049,8 @@ class Message extends DataClass implements Insertable<Message> {
       'arrivedLate': serializer.toJson<bool>(arrivedLate),
       'createdAt': serializer.toJson<int>(createdAt),
       'receivedAt': serializer.toJson<int?>(receivedAt),
+      'seenAt': serializer.toJson<int?>(seenAt),
+      'agentReadAt': serializer.toJson<int?>(agentReadAt),
     };
   }
 
@@ -2002,6 +2070,8 @@ class Message extends DataClass implements Insertable<Message> {
     bool? arrivedLate,
     int? createdAt,
     Value<int?> receivedAt = const Value.absent(),
+    Value<int?> seenAt = const Value.absent(),
+    Value<int?> agentReadAt = const Value.absent(),
   }) => Message(
     id: id ?? this.id,
     channelId: channelId ?? this.channelId,
@@ -2018,6 +2088,8 @@ class Message extends DataClass implements Insertable<Message> {
     arrivedLate: arrivedLate ?? this.arrivedLate,
     createdAt: createdAt ?? this.createdAt,
     receivedAt: receivedAt.present ? receivedAt.value : this.receivedAt,
+    seenAt: seenAt.present ? seenAt.value : this.seenAt,
+    agentReadAt: agentReadAt.present ? agentReadAt.value : this.agentReadAt,
   );
   Message copyWithCompanion(MessagesCompanion data) {
     return Message(
@@ -2044,6 +2116,10 @@ class Message extends DataClass implements Insertable<Message> {
       receivedAt: data.receivedAt.present
           ? data.receivedAt.value
           : this.receivedAt,
+      seenAt: data.seenAt.present ? data.seenAt.value : this.seenAt,
+      agentReadAt: data.agentReadAt.present
+          ? data.agentReadAt.value
+          : this.agentReadAt,
     );
   }
 
@@ -2064,7 +2140,9 @@ class Message extends DataClass implements Insertable<Message> {
           ..write('status: $status, ')
           ..write('arrivedLate: $arrivedLate, ')
           ..write('createdAt: $createdAt, ')
-          ..write('receivedAt: $receivedAt')
+          ..write('receivedAt: $receivedAt, ')
+          ..write('seenAt: $seenAt, ')
+          ..write('agentReadAt: $agentReadAt')
           ..write(')'))
         .toString();
   }
@@ -2086,6 +2164,8 @@ class Message extends DataClass implements Insertable<Message> {
     arrivedLate,
     createdAt,
     receivedAt,
+    seenAt,
+    agentReadAt,
   );
   @override
   bool operator ==(Object other) =>
@@ -2105,7 +2185,9 @@ class Message extends DataClass implements Insertable<Message> {
           other.status == this.status &&
           other.arrivedLate == this.arrivedLate &&
           other.createdAt == this.createdAt &&
-          other.receivedAt == this.receivedAt);
+          other.receivedAt == this.receivedAt &&
+          other.seenAt == this.seenAt &&
+          other.agentReadAt == this.agentReadAt);
 }
 
 class MessagesCompanion extends UpdateCompanion<Message> {
@@ -2124,6 +2206,8 @@ class MessagesCompanion extends UpdateCompanion<Message> {
   final Value<bool> arrivedLate;
   final Value<int> createdAt;
   final Value<int?> receivedAt;
+  final Value<int?> seenAt;
+  final Value<int?> agentReadAt;
   final Value<int> rowid;
   const MessagesCompanion({
     this.id = const Value.absent(),
@@ -2141,6 +2225,8 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     this.arrivedLate = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.receivedAt = const Value.absent(),
+    this.seenAt = const Value.absent(),
+    this.agentReadAt = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   MessagesCompanion.insert({
@@ -2159,6 +2245,8 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     this.arrivedLate = const Value.absent(),
     required int createdAt,
     this.receivedAt = const Value.absent(),
+    this.seenAt = const Value.absent(),
+    this.agentReadAt = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        channelId = Value(channelId),
@@ -2184,6 +2272,8 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     Expression<bool>? arrivedLate,
     Expression<int>? createdAt,
     Expression<int>? receivedAt,
+    Expression<int>? seenAt,
+    Expression<int>? agentReadAt,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -2202,6 +2292,8 @@ class MessagesCompanion extends UpdateCompanion<Message> {
       if (arrivedLate != null) 'arrived_late': arrivedLate,
       if (createdAt != null) 'created_at': createdAt,
       if (receivedAt != null) 'received_at': receivedAt,
+      if (seenAt != null) 'seen_at': seenAt,
+      if (agentReadAt != null) 'agent_read_at': agentReadAt,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -2222,6 +2314,8 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     Value<bool>? arrivedLate,
     Value<int>? createdAt,
     Value<int?>? receivedAt,
+    Value<int?>? seenAt,
+    Value<int?>? agentReadAt,
     Value<int>? rowid,
   }) {
     return MessagesCompanion(
@@ -2240,6 +2334,8 @@ class MessagesCompanion extends UpdateCompanion<Message> {
       arrivedLate: arrivedLate ?? this.arrivedLate,
       createdAt: createdAt ?? this.createdAt,
       receivedAt: receivedAt ?? this.receivedAt,
+      seenAt: seenAt ?? this.seenAt,
+      agentReadAt: agentReadAt ?? this.agentReadAt,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -2292,6 +2388,12 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     if (receivedAt.present) {
       map['received_at'] = Variable<int>(receivedAt.value);
     }
+    if (seenAt.present) {
+      map['seen_at'] = Variable<int>(seenAt.value);
+    }
+    if (agentReadAt.present) {
+      map['agent_read_at'] = Variable<int>(agentReadAt.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -2316,6 +2418,8 @@ class MessagesCompanion extends UpdateCompanion<Message> {
           ..write('arrivedLate: $arrivedLate, ')
           ..write('createdAt: $createdAt, ')
           ..write('receivedAt: $receivedAt, ')
+          ..write('seenAt: $seenAt, ')
+          ..write('agentReadAt: $agentReadAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -2416,6 +2520,37 @@ class $DeliveriesTable extends Deliveries
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _deliveredAtMeta = const VerificationMeta(
+    'deliveredAt',
+  );
+  @override
+  late final GeneratedColumn<int> deliveredAt = GeneratedColumn<int>(
+    'delivered_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _seenAtMeta = const VerificationMeta('seenAt');
+  @override
+  late final GeneratedColumn<int> seenAt = GeneratedColumn<int>(
+    'seen_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _agentReadAtMeta = const VerificationMeta(
+    'agentReadAt',
+  );
+  @override
+  late final GeneratedColumn<int> agentReadAt = GeneratedColumn<int>(
+    'agent_read_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     messageId,
@@ -2426,6 +2561,9 @@ class $DeliveriesTable extends Deliveries
     nextAttemptAt,
     createdAt,
     lastError,
+    deliveredAt,
+    seenAt,
+    agentReadAt,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -2508,6 +2646,30 @@ class $DeliveriesTable extends Deliveries
         lastError.isAcceptableOrUnknown(data['last_error']!, _lastErrorMeta),
       );
     }
+    if (data.containsKey('delivered_at')) {
+      context.handle(
+        _deliveredAtMeta,
+        deliveredAt.isAcceptableOrUnknown(
+          data['delivered_at']!,
+          _deliveredAtMeta,
+        ),
+      );
+    }
+    if (data.containsKey('seen_at')) {
+      context.handle(
+        _seenAtMeta,
+        seenAt.isAcceptableOrUnknown(data['seen_at']!, _seenAtMeta),
+      );
+    }
+    if (data.containsKey('agent_read_at')) {
+      context.handle(
+        _agentReadAtMeta,
+        agentReadAt.isAcceptableOrUnknown(
+          data['agent_read_at']!,
+          _agentReadAtMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -2549,6 +2711,18 @@ class $DeliveriesTable extends Deliveries
         DriftSqlType.string,
         data['${effectivePrefix}last_error'],
       ),
+      deliveredAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}delivered_at'],
+      ),
+      seenAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}seen_at'],
+      ),
+      agentReadAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}agent_read_at'],
+      ),
     );
   }
 
@@ -2567,6 +2741,11 @@ class Delivery extends DataClass implements Insertable<Delivery> {
   final int nextAttemptAt;
   final int createdAt;
   final String? lastError;
+
+  /// Sender side: when the recipient's Mac took it, and the receipts it sent.
+  final int? deliveredAt;
+  final int? seenAt;
+  final int? agentReadAt;
   const Delivery({
     required this.messageId,
     required this.recipientDeviceId,
@@ -2576,6 +2755,9 @@ class Delivery extends DataClass implements Insertable<Delivery> {
     required this.nextAttemptAt,
     required this.createdAt,
     this.lastError,
+    this.deliveredAt,
+    this.seenAt,
+    this.agentReadAt,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -2589,6 +2771,15 @@ class Delivery extends DataClass implements Insertable<Delivery> {
     map['created_at'] = Variable<int>(createdAt);
     if (!nullToAbsent || lastError != null) {
       map['last_error'] = Variable<String>(lastError);
+    }
+    if (!nullToAbsent || deliveredAt != null) {
+      map['delivered_at'] = Variable<int>(deliveredAt);
+    }
+    if (!nullToAbsent || seenAt != null) {
+      map['seen_at'] = Variable<int>(seenAt);
+    }
+    if (!nullToAbsent || agentReadAt != null) {
+      map['agent_read_at'] = Variable<int>(agentReadAt);
     }
     return map;
   }
@@ -2605,6 +2796,15 @@ class Delivery extends DataClass implements Insertable<Delivery> {
       lastError: lastError == null && nullToAbsent
           ? const Value.absent()
           : Value(lastError),
+      deliveredAt: deliveredAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(deliveredAt),
+      seenAt: seenAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(seenAt),
+      agentReadAt: agentReadAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(agentReadAt),
     );
   }
 
@@ -2622,6 +2822,9 @@ class Delivery extends DataClass implements Insertable<Delivery> {
       nextAttemptAt: serializer.fromJson<int>(json['nextAttemptAt']),
       createdAt: serializer.fromJson<int>(json['createdAt']),
       lastError: serializer.fromJson<String?>(json['lastError']),
+      deliveredAt: serializer.fromJson<int?>(json['deliveredAt']),
+      seenAt: serializer.fromJson<int?>(json['seenAt']),
+      agentReadAt: serializer.fromJson<int?>(json['agentReadAt']),
     );
   }
   @override
@@ -2636,6 +2839,9 @@ class Delivery extends DataClass implements Insertable<Delivery> {
       'nextAttemptAt': serializer.toJson<int>(nextAttemptAt),
       'createdAt': serializer.toJson<int>(createdAt),
       'lastError': serializer.toJson<String?>(lastError),
+      'deliveredAt': serializer.toJson<int?>(deliveredAt),
+      'seenAt': serializer.toJson<int?>(seenAt),
+      'agentReadAt': serializer.toJson<int?>(agentReadAt),
     };
   }
 
@@ -2648,6 +2854,9 @@ class Delivery extends DataClass implements Insertable<Delivery> {
     int? nextAttemptAt,
     int? createdAt,
     Value<String?> lastError = const Value.absent(),
+    Value<int?> deliveredAt = const Value.absent(),
+    Value<int?> seenAt = const Value.absent(),
+    Value<int?> agentReadAt = const Value.absent(),
   }) => Delivery(
     messageId: messageId ?? this.messageId,
     recipientDeviceId: recipientDeviceId ?? this.recipientDeviceId,
@@ -2657,6 +2866,9 @@ class Delivery extends DataClass implements Insertable<Delivery> {
     nextAttemptAt: nextAttemptAt ?? this.nextAttemptAt,
     createdAt: createdAt ?? this.createdAt,
     lastError: lastError.present ? lastError.value : this.lastError,
+    deliveredAt: deliveredAt.present ? deliveredAt.value : this.deliveredAt,
+    seenAt: seenAt.present ? seenAt.value : this.seenAt,
+    agentReadAt: agentReadAt.present ? agentReadAt.value : this.agentReadAt,
   );
   Delivery copyWithCompanion(DeliveriesCompanion data) {
     return Delivery(
@@ -2674,6 +2886,13 @@ class Delivery extends DataClass implements Insertable<Delivery> {
           : this.nextAttemptAt,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       lastError: data.lastError.present ? data.lastError.value : this.lastError,
+      deliveredAt: data.deliveredAt.present
+          ? data.deliveredAt.value
+          : this.deliveredAt,
+      seenAt: data.seenAt.present ? data.seenAt.value : this.seenAt,
+      agentReadAt: data.agentReadAt.present
+          ? data.agentReadAt.value
+          : this.agentReadAt,
     );
   }
 
@@ -2687,7 +2906,10 @@ class Delivery extends DataClass implements Insertable<Delivery> {
           ..write('attempts: $attempts, ')
           ..write('nextAttemptAt: $nextAttemptAt, ')
           ..write('createdAt: $createdAt, ')
-          ..write('lastError: $lastError')
+          ..write('lastError: $lastError, ')
+          ..write('deliveredAt: $deliveredAt, ')
+          ..write('seenAt: $seenAt, ')
+          ..write('agentReadAt: $agentReadAt')
           ..write(')'))
         .toString();
   }
@@ -2702,6 +2924,9 @@ class Delivery extends DataClass implements Insertable<Delivery> {
     nextAttemptAt,
     createdAt,
     lastError,
+    deliveredAt,
+    seenAt,
+    agentReadAt,
   );
   @override
   bool operator ==(Object other) =>
@@ -2714,7 +2939,10 @@ class Delivery extends DataClass implements Insertable<Delivery> {
           other.attempts == this.attempts &&
           other.nextAttemptAt == this.nextAttemptAt &&
           other.createdAt == this.createdAt &&
-          other.lastError == this.lastError);
+          other.lastError == this.lastError &&
+          other.deliveredAt == this.deliveredAt &&
+          other.seenAt == this.seenAt &&
+          other.agentReadAt == this.agentReadAt);
 }
 
 class DeliveriesCompanion extends UpdateCompanion<Delivery> {
@@ -2726,6 +2954,9 @@ class DeliveriesCompanion extends UpdateCompanion<Delivery> {
   final Value<int> nextAttemptAt;
   final Value<int> createdAt;
   final Value<String?> lastError;
+  final Value<int?> deliveredAt;
+  final Value<int?> seenAt;
+  final Value<int?> agentReadAt;
   final Value<int> rowid;
   const DeliveriesCompanion({
     this.messageId = const Value.absent(),
@@ -2736,6 +2967,9 @@ class DeliveriesCompanion extends UpdateCompanion<Delivery> {
     this.nextAttemptAt = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.lastError = const Value.absent(),
+    this.deliveredAt = const Value.absent(),
+    this.seenAt = const Value.absent(),
+    this.agentReadAt = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   DeliveriesCompanion.insert({
@@ -2747,6 +2981,9 @@ class DeliveriesCompanion extends UpdateCompanion<Delivery> {
     required int nextAttemptAt,
     required int createdAt,
     this.lastError = const Value.absent(),
+    this.deliveredAt = const Value.absent(),
+    this.seenAt = const Value.absent(),
+    this.agentReadAt = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : messageId = Value(messageId),
        recipientDeviceId = Value(recipientDeviceId),
@@ -2763,6 +3000,9 @@ class DeliveriesCompanion extends UpdateCompanion<Delivery> {
     Expression<int>? nextAttemptAt,
     Expression<int>? createdAt,
     Expression<String>? lastError,
+    Expression<int>? deliveredAt,
+    Expression<int>? seenAt,
+    Expression<int>? agentReadAt,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -2774,6 +3014,9 @@ class DeliveriesCompanion extends UpdateCompanion<Delivery> {
       if (nextAttemptAt != null) 'next_attempt_at': nextAttemptAt,
       if (createdAt != null) 'created_at': createdAt,
       if (lastError != null) 'last_error': lastError,
+      if (deliveredAt != null) 'delivered_at': deliveredAt,
+      if (seenAt != null) 'seen_at': seenAt,
+      if (agentReadAt != null) 'agent_read_at': agentReadAt,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -2787,6 +3030,9 @@ class DeliveriesCompanion extends UpdateCompanion<Delivery> {
     Value<int>? nextAttemptAt,
     Value<int>? createdAt,
     Value<String?>? lastError,
+    Value<int?>? deliveredAt,
+    Value<int?>? seenAt,
+    Value<int?>? agentReadAt,
     Value<int>? rowid,
   }) {
     return DeliveriesCompanion(
@@ -2798,6 +3044,9 @@ class DeliveriesCompanion extends UpdateCompanion<Delivery> {
       nextAttemptAt: nextAttemptAt ?? this.nextAttemptAt,
       createdAt: createdAt ?? this.createdAt,
       lastError: lastError ?? this.lastError,
+      deliveredAt: deliveredAt ?? this.deliveredAt,
+      seenAt: seenAt ?? this.seenAt,
+      agentReadAt: agentReadAt ?? this.agentReadAt,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -2829,6 +3078,15 @@ class DeliveriesCompanion extends UpdateCompanion<Delivery> {
     if (lastError.present) {
       map['last_error'] = Variable<String>(lastError.value);
     }
+    if (deliveredAt.present) {
+      map['delivered_at'] = Variable<int>(deliveredAt.value);
+    }
+    if (seenAt.present) {
+      map['seen_at'] = Variable<int>(seenAt.value);
+    }
+    if (agentReadAt.present) {
+      map['agent_read_at'] = Variable<int>(agentReadAt.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -2846,6 +3104,9 @@ class DeliveriesCompanion extends UpdateCompanion<Delivery> {
           ..write('nextAttemptAt: $nextAttemptAt, ')
           ..write('createdAt: $createdAt, ')
           ..write('lastError: $lastError, ')
+          ..write('deliveredAt: $deliveredAt, ')
+          ..write('seenAt: $seenAt, ')
+          ..write('agentReadAt: $agentReadAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -3658,6 +3919,8 @@ typedef $$MessagesTableCreateCompanionBuilder = MessagesCompanion Function({
   Value<bool> arrivedLate,
   required int createdAt,
   Value<int?> receivedAt,
+  Value<int?> seenAt,
+  Value<int?> agentReadAt,
   Value<int> rowid,
 });
 typedef $$MessagesTableUpdateCompanionBuilder = MessagesCompanion Function({
@@ -3676,6 +3939,8 @@ typedef $$MessagesTableUpdateCompanionBuilder = MessagesCompanion Function({
   Value<bool> arrivedLate,
   Value<int> createdAt,
   Value<int?> receivedAt,
+  Value<int?> seenAt,
+  Value<int?> agentReadAt,
   Value<int> rowid,
 });
 
@@ -3760,6 +4025,16 @@ class $$MessagesTableFilterComposer
 
   ColumnFilters<int> get receivedAt => $composableBuilder(
     column: $table.receivedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get seenAt => $composableBuilder(
+    column: $table.seenAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get agentReadAt => $composableBuilder(
+    column: $table.agentReadAt,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -3847,6 +4122,16 @@ class $$MessagesTableOrderingComposer
     column: $table.receivedAt,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<int> get seenAt => $composableBuilder(
+    column: $table.seenAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get agentReadAt => $composableBuilder(
+    column: $table.agentReadAt,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$MessagesTableAnnotationComposer
@@ -3910,6 +4195,14 @@ class $$MessagesTableAnnotationComposer
     column: $table.receivedAt,
     builder: (column) => column,
   );
+
+  GeneratedColumn<int> get seenAt =>
+      $composableBuilder(column: $table.seenAt, builder: (column) => column);
+
+  GeneratedColumn<int> get agentReadAt => $composableBuilder(
+    column: $table.agentReadAt,
+    builder: (column) => column,
+  );
 }
 
 class $$MessagesTableTableManager
@@ -3955,6 +4248,8 @@ class $$MessagesTableTableManager
                 Value<bool> arrivedLate = const Value.absent(),
                 Value<int> createdAt = const Value.absent(),
                 Value<int?> receivedAt = const Value.absent(),
+                Value<int?> seenAt = const Value.absent(),
+                Value<int?> agentReadAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => MessagesCompanion(
                 id: id,
@@ -3972,6 +4267,8 @@ class $$MessagesTableTableManager
                 arrivedLate: arrivedLate,
                 createdAt: createdAt,
                 receivedAt: receivedAt,
+                seenAt: seenAt,
+                agentReadAt: agentReadAt,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -3991,6 +4288,8 @@ class $$MessagesTableTableManager
                 Value<bool> arrivedLate = const Value.absent(),
                 required int createdAt,
                 Value<int?> receivedAt = const Value.absent(),
+                Value<int?> seenAt = const Value.absent(),
+                Value<int?> agentReadAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => MessagesCompanion.insert(
                 id: id,
@@ -4008,6 +4307,8 @@ class $$MessagesTableTableManager
                 arrivedLate: arrivedLate,
                 createdAt: createdAt,
                 receivedAt: receivedAt,
+                seenAt: seenAt,
+                agentReadAt: agentReadAt,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0
@@ -4050,6 +4351,9 @@ typedef $$DeliveriesTableCreateCompanionBuilder = DeliveriesCompanion Function({
   required int nextAttemptAt,
   required int createdAt,
   Value<String?> lastError,
+  Value<int?> deliveredAt,
+  Value<int?> seenAt,
+  Value<int?> agentReadAt,
   Value<int> rowid,
 });
 typedef $$DeliveriesTableUpdateCompanionBuilder = DeliveriesCompanion Function({
@@ -4061,6 +4365,9 @@ typedef $$DeliveriesTableUpdateCompanionBuilder = DeliveriesCompanion Function({
   Value<int> nextAttemptAt,
   Value<int> createdAt,
   Value<String?> lastError,
+  Value<int?> deliveredAt,
+  Value<int?> seenAt,
+  Value<int?> agentReadAt,
   Value<int> rowid,
 });
 
@@ -4110,6 +4417,21 @@ class $$DeliveriesTableFilterComposer
 
   ColumnFilters<String> get lastError => $composableBuilder(
     column: $table.lastError,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get deliveredAt => $composableBuilder(
+    column: $table.deliveredAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get seenAt => $composableBuilder(
+    column: $table.seenAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get agentReadAt => $composableBuilder(
+    column: $table.agentReadAt,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -4162,6 +4484,21 @@ class $$DeliveriesTableOrderingComposer
     column: $table.lastError,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<int> get deliveredAt => $composableBuilder(
+    column: $table.deliveredAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get seenAt => $composableBuilder(
+    column: $table.seenAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get agentReadAt => $composableBuilder(
+    column: $table.agentReadAt,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$DeliveriesTableAnnotationComposer
@@ -4202,6 +4539,19 @@ class $$DeliveriesTableAnnotationComposer
 
   GeneratedColumn<String> get lastError =>
       $composableBuilder(column: $table.lastError, builder: (column) => column);
+
+  GeneratedColumn<int> get deliveredAt => $composableBuilder(
+    column: $table.deliveredAt,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get seenAt =>
+      $composableBuilder(column: $table.seenAt, builder: (column) => column);
+
+  GeneratedColumn<int> get agentReadAt => $composableBuilder(
+    column: $table.agentReadAt,
+    builder: (column) => column,
+  );
 }
 
 class $$DeliveriesTableTableManager
@@ -4243,6 +4593,9 @@ class $$DeliveriesTableTableManager
                 Value<int> nextAttemptAt = const Value.absent(),
                 Value<int> createdAt = const Value.absent(),
                 Value<String?> lastError = const Value.absent(),
+                Value<int?> deliveredAt = const Value.absent(),
+                Value<int?> seenAt = const Value.absent(),
+                Value<int?> agentReadAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => DeliveriesCompanion(
                 messageId: messageId,
@@ -4253,6 +4606,9 @@ class $$DeliveriesTableTableManager
                 nextAttemptAt: nextAttemptAt,
                 createdAt: createdAt,
                 lastError: lastError,
+                deliveredAt: deliveredAt,
+                seenAt: seenAt,
+                agentReadAt: agentReadAt,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -4265,6 +4621,9 @@ class $$DeliveriesTableTableManager
                 required int nextAttemptAt,
                 required int createdAt,
                 Value<String?> lastError = const Value.absent(),
+                Value<int?> deliveredAt = const Value.absent(),
+                Value<int?> seenAt = const Value.absent(),
+                Value<int?> agentReadAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => DeliveriesCompanion.insert(
                 messageId: messageId,
@@ -4275,6 +4634,9 @@ class $$DeliveriesTableTableManager
                 nextAttemptAt: nextAttemptAt,
                 createdAt: createdAt,
                 lastError: lastError,
+                deliveredAt: deliveredAt,
+                seenAt: seenAt,
+                agentReadAt: agentReadAt,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0

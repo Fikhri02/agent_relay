@@ -67,12 +67,19 @@ class Messages extends Table {
   IntColumn get createdAt => integer()();
   IntColumn get receivedAt => integer().nullable()();
 
+  /// Receiver side: when this person saw it in the app / their agent read it
+  /// through the local API. Each sends one receipt back.
+  IntColumn get seenAt => integer().nullable()();
+  IntColumn get agentReadAt => integer().nullable()();
+
   @override
   Set<Column> get primaryKey => {id};
 }
 
-/// One sealed envelope per recipient. `status`: `queued` | `delivered` |
-/// `dropped`.
+/// One outgoing request per recipient: a sealed message (`/relay/deliver`) or
+/// a read receipt (`/relay/receipt`, messageId `receipt:{id}:{kind}`).
+/// `envelopeJson` = `{"path": ..., "payload": {...}}`. `status`: `queued` |
+/// `delivered` | `dropped`.
 class Deliveries extends Table {
   TextColumn get messageId => text()();
   TextColumn get recipientDeviceId => text()();
@@ -82,6 +89,11 @@ class Deliveries extends Table {
   IntColumn get nextAttemptAt => integer()();
   IntColumn get createdAt => integer()();
   TextColumn get lastError => text().nullable()();
+
+  /// Sender side: when the recipient's Mac took it, and the receipts it sent.
+  IntColumn get deliveredAt => integer().nullable()();
+  IntColumn get seenAt => integer().nullable()();
+  IntColumn get agentReadAt => integer().nullable()();
 
   @override
   Set<Column> get primaryKey => {messageId, recipientDeviceId};
