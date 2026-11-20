@@ -1,0 +1,127 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import '../crypto/request_signer.dart';
+import '../identity/local_identity.dart';
+import '../identity/tls_cert_manager.dart';
+
+typedef PeerTarget = ({String host, int port, String? pinnedFingerprint});
+typedef PeerResponse = ({
+  int status,
+  Map<String, dynamic> json,
+  String? presentedFingerprint,
+});
+
+class PeerUnreachable implements Exception {
+  const PeerUnreachable(this.cause);
+  final Object cause;
+  @override
+  String toString() => 'peer unreachable: $cause';
+}
+
+class PeerIdentityMismatch implements Exception {
+  const PeerIdentityMismatch(this.presented);
+  final String presented;
+  @override
+  String toString() => 'peer certificate changed ($presented)';
+}
+
+class PeerClockSkew implements Exception {
+  const PeerClockSkew(this.skewMs);
+
+  /// Peer's clock minus ours.
+  final int skewMs;
+  @override
+  String toString() => 'clocks differ by ${skewMs ~/ 1000} s';
+}
+
+/// Signed HTTPS calls to another Mac. With a pinned fingerprint, any other
+/// certificate is refused; without one (pairing only) the presented one is
+/// returned for the comparison code.
+class PeerClient {
+  PeerClient(
+    this.me, {
+    required this.relayPort,
+    int Function()? nowMs,
+    this.timeout = const Duration(seconds: 10),
+  }) : _now = nowMs ?? (() => DateTime.now().millisecondsSinceEpoch);
+
+  final LocalIdentity me;
+  final int relayPort;
+  final Duration timeout;
+  final int Function() _now;
+
+  Future<PeerResponse> post(
+    PeerTarget t,
+    String path,
+    Map<String, dynamic> body,
+  ) => _send('POST', t, path, utf8.encode(jsonEncode(body)));
+
+  Future<PeerResponse> get(PeerTarget t, String path) =>
+      _send('GET', t, path, const []);
+
+  Future<PeerResponse> _send(
+    String method,
+    PeerTarget t,
+    String path,
+    List<int> body,
+  ) async {
+    String? presented;
+    var mismatch = false;
+    final client = HttpClient()
+      ..connectionTimeout = timeout
+      ..badCertificateCallback = (cert, host, port) {
+        presented = TlsCertManager.fingerprintOfDer(cert.der);
+        if (t.pinnedFingerprint != null && presented != t.pinnedFingerprint) {
+          mismatch = true;
+          return false;
+        }
+        return true;
+      };
+    try {
+      final ts = _now();
+      final uri = Uri(scheme: 'https', host: t.host, port: t.port, path: path);
+      final sig = await signRequest(
+        me.keys.signing,
+        signingString(
+          method: method,
+          path: uri.path,
+          timestampMs: ts,
+          body: body,
+        ),
+      );
+      final req = await client.openUrl(method, uri).timeout(timeout);
+      req.headers
+        ..set('x-device-id', me.deviceId)
+        ..set('x-timestamp', '$ts')
+        ..set('x-signature', sig)
+        ..set('x-relay-port', '$relayPort')
+        ..contentType = ContentType.json;
+      req.add(body);
+      final res = await req.close().timeout(timeout);
+      final text = await utf8.decodeStream(res).timeout(timeout);
+      presented ??= res.certificate == null
+          ? null
+          : TlsCertManager.fingerprintOfDer(res.certificate!.der);
+      final json = text.isEmpty
+          ? <String, dynamic>{}
+          : (jsonDecode(text) as Map).cast<String, dynamic>();
+      if (res.statusCode == 401 && json['error'] == 'clock_skew') {
+        throw PeerClockSkew((json['serverTimeMs'] as int) - ts);
+      }
+      return (
+        status: res.statusCode,
+        json: json,
+        presentedFingerprint: presented,
+      );
+    } on PeerClockSkew {
+      rethrow;
+    } on Object catch (e) {
+      if (mismatch) throw PeerIdentityMismatch(presented ?? '');
+      throw PeerUnreachable(e);
+    } finally {
+      client.close(force: true);
+    }
+  }
+}
