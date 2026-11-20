@@ -140,6 +140,16 @@ class MessageService {
     final changed = await db.transaction(() async {
       final m = await _get(messageId);
       if (m.status != 'awaiting_approval') return false;
+      final mine =
+          await (db.select(db.channelMembers)..where(
+                (x) =>
+                    x.channelId.equals(m.channelId) &
+                    x.deviceId.equals(myDeviceId),
+              ))
+              .getSingleOrNull();
+      if (mine == null || mine.state != 'member' || mine.leftHlc != null) {
+        throw const NotAMember();
+      }
       final now = _now();
       if (now - m.createdAt > draftLifetimeMs) {
         await (db.update(db.messages)..where((x) => x.id.equals(m.id))).write(

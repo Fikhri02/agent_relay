@@ -617,5 +617,133 @@ void main() {
         throwsA(isA<NotAMember>()),
       );
     });
+
+    Future<Envelope> historyFor(Envelope e, Party to, {String? from}) async =>
+        Envelope(
+          id: e.id,
+          channelId: e.channelId,
+          kind: e.kind,
+          from: from ?? e.from,
+          sentAt: e.sentAt,
+          hlc: e.hlc,
+          seq: e.seq,
+          history: true,
+          sealed: await seal(
+            utf8.encode(jsonEncode({'body': 'forged'})),
+            recipientBoxPub: to.keys.boxPub,
+            aad: Envelope(
+              id: e.id,
+              channelId: e.channelId,
+              kind: e.kind,
+              from: from ?? e.from,
+              sentAt: e.sentAt,
+              hlc: e.hlc,
+              seq: e.seq,
+              sealed: null,
+            ).aad,
+          ),
+        );
+
+    test("a history envelope from another member cannot unlock someone else's "
+        'placeholder', () async {
+      await aliceSurat();
+      await receiverSurat(carol);
+      await carol.db
+          .into(carol.db.channelMembers)
+          .insert(
+            ChannelMembersCompanion.insert(
+              channelId: 'surat-1',
+              deviceId: bob.id,
+              joinedHlc: '0000000000000-00000',
+            ),
+          );
+      await insertPeer(carol.db, bob.keys, name: 'Bob');
+      final ph = Envelope.fromJson(await deliver(carol));
+      // the placeholder is attributed to Alice; Bob tries to fill it
+      await carol.svc.receive(ph, from: await carol.peer(alice.id));
+      final forged = await historyFor(ph, carol, from: bob.id);
+      await carol.svc.receive(forged, from: await carol.peer(bob.id));
+      final row = await (carol.db.select(
+        carol.db.messages,
+      )..where((m) => m.id.equals(ph.id))).getSingle();
+      expect(row.status, 'locked');
+      expect(row.body, isNull);
+      expect(row.fromDeviceId, alice.id);
+    });
+
+    test(
+      'a history envelope for another channel cannot unlock the row',
+      () async {
+        await aliceSurat();
+        await receiverSurat(carol);
+        await carol.db
+            .into(carol.db.channels)
+            .insert(
+              ChannelsCompanion.insert(
+                id: 'surat-2',
+                kind: 'surat',
+                createdAt: 1,
+              ),
+            );
+        for (final id in [alice.id, carol.id]) {
+          await carol.db
+              .into(carol.db.channelMembers)
+              .insert(
+                ChannelMembersCompanion.insert(
+                  channelId: 'surat-2',
+                  deviceId: id,
+                  joinedHlc: '0000000000000-00000',
+                ),
+              );
+        }
+        final ph = Envelope.fromJson(await deliver(carol));
+        await carol.svc.receive(ph, from: await carol.peer(alice.id));
+        final other = Envelope(
+          id: ph.id,
+          channelId: 'surat-2',
+          kind: ph.kind,
+          from: ph.from,
+          sentAt: ph.sentAt,
+          hlc: ph.hlc,
+          seq: ph.seq,
+          history: true,
+          sealed: await seal(
+            utf8.encode(jsonEncode({'body': 'forged'})),
+            recipientBoxPub: carol.keys.boxPub,
+            aad: Envelope(
+              id: ph.id,
+              channelId: 'surat-2',
+              kind: ph.kind,
+              from: ph.from,
+              sentAt: ph.sentAt,
+              hlc: ph.hlc,
+              seq: ph.seq,
+              sealed: null,
+            ).aad,
+          ),
+        );
+        await carol.svc.receive(other, from: await carol.peer(alice.id));
+        final row = await (carol.db.select(
+          carol.db.messages,
+        )..where((m) => m.id.equals(ph.id))).getSingle();
+        expect(row.status, 'locked');
+        expect(row.channelId, 'surat-1');
+        expect(row.body, isNull);
+      },
+    );
+
+    test('approving a draft after I left throws NotAMember and sends nothing', () async {
+      await aliceSurat();
+      final d = await alice.svc.draft(channelId: 'surat-1', body: 'x');
+      await alice.db.customStatement(
+        "UPDATE channel_members SET state='left', left_hlc='0000000000001-00000' WHERE device_id='${alice.id}'",
+      );
+      await expectLater(alice.svc.approve(d.id), throwsA(isA<NotAMember>()));
+      expect(await queued(alice, bob), isEmpty);
+      final row = await (alice.db.select(
+        alice.db.messages,
+      )..where((m) => m.id.equals(d.id))).getSingle();
+      expect(row.status, 'awaiting_approval');
+    });
   });
 }

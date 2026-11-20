@@ -138,13 +138,18 @@ class RelayDatabase extends _$RelayDatabase {
   }
 
   /// Inserts [m], or fills an existing row with the same id when that row is
-  /// still a `locked` placeholder (body, context, reply and status). A
+  /// still a `locked` placeholder of the same channel and sender (body, context, reply and status). A
   /// readable row is never overwritten. Returns true when it wrote.
   Future<bool> insertOrUnlock(MessagesCompanion m) async {
     if (await insertIncomingIfNew(m)) return true;
     final filled =
         await (update(messages)..where(
-              (x) => x.id.equals(m.id.value) & x.status.equals('locked'),
+              (x) =>
+                  x.id.equals(m.id.value) &
+                  x.status.equals('locked') &
+                  x.channelId.equals(m.channelId.value) &
+                  x.fromDeviceId.equals(m.fromDeviceId.value) &
+                  x.direction.equals('in'),
             ))
             .write(
               MessagesCompanion(

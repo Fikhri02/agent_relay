@@ -351,6 +351,44 @@ void main() {
     );
   });
 
+  test('insertOrUnlock leaves a locked row of another sender or channel '
+      'untouched', () async {
+    await db
+        .into(db.messages)
+        .insert(
+          MessagesCompanion.insert(
+            id: 'm1',
+            channelId: 'ch',
+            kind: 'message',
+            fromDeviceId: 'x',
+            sentAt: 1,
+            direction: 'in',
+            status: 'locked',
+            createdAt: 1,
+          ),
+        );
+    MessagesCompanion fill({String ch = 'ch', String from = 'x'}) =>
+        MessagesCompanion.insert(
+          id: 'm1',
+          channelId: ch,
+          kind: 'message',
+          fromDeviceId: from,
+          sentAt: 1,
+          body: const Value('forged'),
+          direction: 'in',
+          status: 'unread',
+          createdAt: 2,
+        );
+    expect(await db.insertOrUnlock(fill(from: 'y')), isFalse);
+    expect(await db.insertOrUnlock(fill(ch: 'other')), isFalse);
+    final row = await (db.select(
+      db.messages,
+    )..where((m) => m.id.equals('m1'))).getSingle();
+    expect(row.status, 'locked');
+    expect(row.body, isNull);
+    expect(row.fromDeviceId, 'x');
+  });
+
   test('migration v1 to v2 keeps rows and marks private members mutually '
       'approved', () async {
     final dir = await Directory.systemTemp.createTemp('agent_relay_mig');
