@@ -175,6 +175,34 @@ void main() {
     expect(ch.closedAt, isNull);
   });
 
+  test(
+    're-pairing with a surat contact succeeds and makes them paired again',
+    () async {
+      await pairAB();
+      await shareSurat(a);
+      await shareSurat(b);
+      final gone = b.pairing.events.firstWhere((e) => e is PeerUnpaired);
+      await a.pairing.unpair(b.me.deviceId);
+      await gone.timeout(const Duration(seconds: 5));
+      for (final n in [a, b]) {
+        expect(
+          (await n.db.select(n.db.peers).getSingle()).trust,
+          'surat_contact',
+        );
+      }
+      a.window.open();
+      b.window.open();
+      await b.pairing.connect(a.target);
+      final doneA = a.pairing.events.firstWhere((e) => e is PairingSucceeded);
+      await a.pairing.confirm(b.me.deviceId);
+      await b.pairing.confirm(a.me.deviceId);
+      await doneA.timeout(const Duration(seconds: 5));
+      for (final n in [a, b]) {
+        expect((await n.db.select(n.db.peers).getSingle()).trust, 'paired');
+      }
+    },
+  );
+
   test('a second hello while a pairing is pending aborts both', () async {
     final c = await TestNode.start('tommy', clock: () => now);
     addTearDown(c.stop);

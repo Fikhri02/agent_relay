@@ -111,14 +111,62 @@ void main() {
   Future<Message> message(String id) =>
       (db.select(db.messages)..where((m) => m.id.equals(id))).getSingle();
 
-  test('worker delivers to a surat contact', () async {
-    // Queued while paired; recipients for contacts arrive with surat sends.
-    final id = await queuedMessage();
-    await (db.update(db.peers))
-        .write(const PeersCompanion(trust: Value('surat_contact')));
+  const suratCh = 'sur1';
+  Future<void> addSurat() async {
+    await db
+        .into(db.channels)
+        .insert(
+          ChannelsCompanion.insert(id: suratCh, kind: 'surat', createdAt: 1),
+        );
+    for (final id in [svc.myDeviceId, peerId]) {
+      await db
+          .into(db.channelMembers)
+          .insert(
+            ChannelMembersCompanion.insert(
+              channelId: suratCh,
+              deviceId: id,
+              joinedHlc: '0000000000000-00000',
+            ),
+          );
+    }
+  }
+
+  Future<String> queuedSuratMessage() async {
+    final d = await svc.draft(channelId: suratCh, body: 'surat hi');
+    await svc.approve(d.id);
+    return d.id;
+  }
+
+  Future<void> makeContact() =>
+      (db.update(db.peers))
+          .write(const PeersCompanion(trust: Value('surat_contact')));
+
+  test('worker delivers a surat message to a surat contact', () async {
+    await addSurat();
+    final id = await queuedSuratMessage();
+    await makeContact();
     await worker.runOnce();
     expect(net.calls, hasLength(1));
     expect((await message(id)).status, 'sent');
+  });
+
+  test('worker never sends a private message to a contact', () async {
+    final id = await queuedMessage();
+    await makeContact();
+    await worker.runOnce();
+    expect(net.calls, isEmpty);
+    expect((await delivery(id)).status, 'dropped');
+  });
+
+  test('A unpairs while B is offline: a 401 drops private deliveries only and keeps surat ones queued', () async {
+    await addSurat();
+    final priv = await queuedMessage();
+    final sur = await queuedSuratMessage();
+    net.next = 401;
+    await worker.runOnce();
+    expect(unpaired, contains(peerId));
+    expect((await delivery(priv)).status, 'dropped');
+    expect((await delivery(sur)).status, 'queued');
   });
 
   test('posts to the peer address pinned to its fingerprint; 200 marks the message sent', () async {

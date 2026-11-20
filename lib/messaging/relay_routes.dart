@@ -24,6 +24,8 @@ Map<String, RouteHandler> relayRoutes(MessageService svc) => {
     try {
       final r = await svc.receive(env, from: peer);
       return _json(200, {'received': true, 'duplicate': r.duplicate});
+    } on UntrustedSender {
+      return _json(401, {'error': 'untrusted'});
     } on NotAMember {
       return _json(403, {'error': 'not_a_member'});
     }

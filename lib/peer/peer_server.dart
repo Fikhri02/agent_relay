@@ -80,7 +80,9 @@ class PeerServer {
 
   Future<Response> _reveal(Request r) async {
     final body = await _body(r);
-    final signPub = r.context[unpairedSignPubKey] as List<int>?;
+    final signPub =
+        r.context[unpairedSignPubKey] as List<int>? ??
+        (r.context[peerContextKey] as Peer?)?.signPub;
     if (body == null ||
         signPub == null ||
         body['nonce'] is! String ||

@@ -30,6 +30,12 @@ class UnknownChannel implements Exception {
   const UnknownChannel();
 }
 
+/// A delivery this Mac won't take from this peer: the channel is closed, or
+/// it is private and the sender is no longer paired. Answered as 401.
+class UntrustedSender implements Exception {
+  const UntrustedSender();
+}
+
 class NotAMember implements Exception {
   const NotAMember();
 }
@@ -231,6 +237,14 @@ class MessageService {
 
   Future<ReceiveResult> receive(Envelope e, {required Peer from}) async {
     if (e.from != from.deviceId) throw const NotAMember();
+    final channel = await (db.select(
+      db.channels,
+    )..where((c) => c.id.equals(e.channelId))).getSingleOrNull();
+    if (channel != null &&
+        (channel.closedAt != null ||
+            (channel.kind == 'private' && from.trust != 'paired'))) {
+      throw const UntrustedSender();
+    }
     final members =
         await (db.select(db.channelMembers)..where(
               (m) => m.channelId.equals(e.channelId) & m.leftHlc.isNull(),

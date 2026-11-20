@@ -90,6 +90,11 @@ class DeliveryWorker {
       if (await _dropIfTooOld(d, peers[d.recipientDeviceId])) continue;
       final peer = peers[d.recipientDeviceId];
       if (peer == null || !canTalk(peer)) continue;
+      if (peer.trust != 'paired' && await _isPrivate(d)) {
+        // Private channels are for paired peers only; the channel is closed.
+        await _set(d, status: 'dropped', error: 'unpaired');
+        continue;
+      }
       if (unreachable.contains(peer.deviceId)) {
         // Already failed this pass: don't wait out another timeout.
         await _retry(d, 'peer unreachable');
@@ -192,17 +197,24 @@ class DeliveryWorker {
           _skewNoticeSent.remove(peer.deviceId);
         }
       } else if (res.status == 401 && res.json['error'] == 'untrusted') {
-        await (db.update(db.deliveries)..where(
-              (x) =>
-                  x.recipientDeviceId.equals(peer.deviceId) &
-                  x.status.equals('queued'),
-            ))
-            .write(
-              const DeliveriesCompanion(
-                status: Value('dropped'),
-                lastError: Value('unpaired'),
-              ),
-            );
+        // Still sharing a surat: only the private-channel deliveries go.
+        final keepSurat = await sharesSurat(
+          db,
+          messages.myDeviceId,
+          peer.deviceId,
+        );
+        final queued =
+            await (db.select(db.deliveries)..where(
+                  (x) =>
+                      x.recipientDeviceId.equals(peer.deviceId) &
+                      x.status.equals('queued'),
+                ))
+                .get();
+        for (final q in queued) {
+          if (!keepSurat || await _isPrivate(q)) {
+            await _set(q, status: 'dropped', error: 'unpaired');
+          }
+        }
         await onUnpaired(peer.deviceId);
         await notifier.show(
           NotificationText(
@@ -242,6 +254,18 @@ class DeliveryWorker {
       return false;
     }
     return true;
+  }
+
+  /// Whether this delivery (a message, or a receipt for one) belongs to a
+  /// private channel.
+  Future<bool> _isPrivate(Delivery d) async {
+    final id = d.messageId.startsWith('receipt:')
+        ? d.messageId.split(':')[1]
+        : d.messageId;
+    final q = db.select(db.channels).join([
+      innerJoin(db.messages, db.messages.channelId.equalsExp(db.channels.id)),
+    ])..where(db.messages.id.equals(id) & db.channels.kind.equals('private'));
+    return (await q.get()).isNotEmpty;
   }
 
   Future<void> _retry(Delivery d, String error) async {
