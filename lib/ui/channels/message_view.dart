@@ -39,6 +39,14 @@ class MessageContext {
   }
 }
 
+/// What happened to my message at one recipient's Mac.
+typedef ReceiptView = ({
+  String personName,
+  DateTime? deliveredAt,
+  DateTime? seenAt,
+  DateTime? agentReadAt,
+});
+
 /// A message as the screens show it.
 class MessageView {
   const MessageView({
@@ -50,6 +58,7 @@ class MessageView {
     this.arrivedLate = false,
     this.locked = false,
     this.mine = false,
+    this.receipts = const [],
   });
 
   /// From a stored row. [senderName] is resolved by the caller ("You" for
@@ -74,4 +83,7 @@ class MessageView {
   final bool arrivedLate;
   final bool locked;
   final bool mine;
+
+  /// One per recipient, for my own messages.
+  final List<ReceiptView> receipts;
 }

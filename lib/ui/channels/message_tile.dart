@@ -112,6 +112,11 @@ class MessageTile extends StatelessWidget {
           const SizedBox(height: 4),
           if (body != null && body.isNotEmpty)
             SelectableText(body, style: theme.textTheme.bodyMedium),
+          if (message.mine)
+            for (final r in message.receipts) ...[
+              const SizedBox(height: 8),
+              _ReceiptLine(receipt: r),
+            ],
           if (message.arrivedLate || onCopy != null) ...[
             const SizedBox(height: 8),
             Row(
@@ -140,5 +145,50 @@ class MessageTile extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+/// Delivered → seen in the app → read by their agent, for one recipient.
+class _ReceiptLine extends StatelessWidget {
+  const _ReceiptLine({required this.receipt});
+
+  final ReceiptView receipt;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).extension<RelayColors>()!;
+    final style = TextStyle(
+      fontSize: 12,
+      color: c.muted,
+      fontFeatures: RelayText.tabular,
+    );
+    Widget item(IconData icon, String text, Color color) => Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 16, color: color),
+        const SizedBox(width: 4),
+        Text(text, style: style.copyWith(color: color)),
+      ],
+    );
+    final r = receipt;
+    final parts = <Widget>[
+      if (r.deliveredAt == null)
+        item(Icons.schedule, "Waiting for ${r.personName}'s Mac", c.muted)
+      else if (r.seenAt == null && r.agentReadAt == null)
+        item(Icons.done, 'Delivered ${formatTime(r.deliveredAt!)}', c.muted),
+      if (r.seenAt != null)
+        item(
+          Icons.visibility_outlined,
+          'Seen ${formatTime(r.seenAt!)}',
+          c.muted,
+        ),
+      if (r.agentReadAt != null)
+        item(
+          Icons.done_all,
+          "${r.personName}'s agent read it ${formatTime(r.agentReadAt!)}",
+          c.success,
+        ),
+    ];
+    return Wrap(spacing: 12, runSpacing: 4, children: parts);
   }
 }

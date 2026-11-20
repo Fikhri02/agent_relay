@@ -141,4 +141,90 @@ void main() {
       expect(MessageContext.fromJson('{}'), isNull);
     },
   );
+
+  group('receipts on my memos', () {
+    MessageView mine(List<ReceiptView> receipts) => MessageView(
+      id: 'm2',
+      senderName: 'You',
+      sentAt: sentAt,
+      body: 'Staging is free now',
+      mine: true,
+      receipts: receipts,
+    );
+
+    testWidgets('not yet delivered says it is waiting for their Mac', (
+      tester,
+    ) async {
+      await pumpUi(
+        tester,
+        MessageTile(
+          message: mine([
+            (
+              personName: 'Xavier',
+              deliveredAt: null,
+              seenAt: null,
+              agentReadAt: null,
+            ),
+          ]),
+        ),
+      );
+      expect(find.text("Waiting for Xavier's Mac"), findsOneWidget);
+    });
+
+    testWidgets(
+      'delivered, seen and read by their agent each show with a time',
+      (tester) async {
+        await pumpUi(
+          tester,
+          MessageTile(
+            message: mine([
+              (
+                personName: 'Xavier',
+                deliveredAt: DateTime(2026, 11, 20, 9, 41),
+                seenAt: DateTime(2026, 11, 20, 9, 42),
+                agentReadAt: DateTime(2026, 11, 20, 9, 44),
+              ),
+            ]),
+          ),
+        );
+        expect(find.text('Seen 9:42 AM'), findsOneWidget);
+        expect(find.text("Xavier's agent read it 9:44 AM"), findsOneWidget);
+        expect(find.byIcon(Icons.visibility_outlined), findsOneWidget);
+        expect(find.byIcon(Icons.done_all), findsOneWidget);
+      },
+    );
+
+    testWidgets('delivered but unread says Delivered', (tester) async {
+      await pumpUi(
+        tester,
+        MessageTile(
+          message: mine([
+            (
+              personName: 'Xavier',
+              deliveredAt: DateTime(2026, 11, 20, 9, 41),
+              seenAt: null,
+              agentReadAt: null,
+            ),
+          ]),
+        ),
+      );
+      expect(find.text('Delivered 9:41 AM'), findsOneWidget);
+    });
+
+    testWidgets('their memos show no receipt line', (tester) async {
+      await pumpUi(
+        tester,
+        MessageTile(
+          message: MessageView(
+            id: 'x',
+            senderName: 'Xavier',
+            sentAt: sentAt,
+            body: 'hi',
+          ),
+        ),
+      );
+      expect(find.textContaining('Delivered'), findsNothing);
+      expect(find.textContaining('Waiting for'), findsNothing);
+    });
+  });
 }
