@@ -117,9 +117,7 @@ class PeerClient implements PeerTransport {
       presented ??= res.certificate == null
           ? null
           : TlsCertManager.fingerprintOfDer(res.certificate!.der);
-      final json = text.isEmpty
-          ? <String, dynamic>{}
-          : (jsonDecode(text) as Map).cast<String, dynamic>();
+      final json = _jsonMap(text);
       if (res.statusCode == 401 && json['error'] == 'clock_skew') {
         throw PeerClockSkew((json['serverTimeMs'] as int) - ts);
       }
@@ -135,6 +133,18 @@ class PeerClient implements PeerTransport {
       throw PeerUnreachable(e);
     } finally {
       client.close(force: true);
+    }
+  }
+
+  /// The body as a JSON object; anything else (empty, plain text such as an
+  /// older build's "Route not found", a JSON array) is `{}`: the status
+  /// still says what happened.
+  static Map<String, dynamic> _jsonMap(String text) {
+    try {
+      final v = jsonDecode(text);
+      return v is Map ? v.cast<String, dynamic>() : <String, dynamic>{};
+    } on FormatException {
+      return <String, dynamic>{};
     }
   }
 }

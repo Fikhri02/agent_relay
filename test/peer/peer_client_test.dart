@@ -42,6 +42,7 @@ void main() {
     await server.start(
       handler: (req) {
         lastHeaders = req.headers;
+        if (req.url.path == 'old') return Response.notFound('Route not found');
         if (req.url.path == 'skew') {
           return Response(
             401,
@@ -103,6 +104,14 @@ void main() {
       c.post(target(pin: serverFp), '/skew', {}),
       throwsA(isA<PeerClockSkew>().having((e) => e.skewMs, 'skewMs', 45000)),
     );
+  });
+
+  test('a plain-text body (an older build\'s 404) is answered as {}, '
+      'not as unreachable', () async {
+    final c = PeerClient(me, relayPort: 8790);
+    final res = await c.post(target(pin: serverFp), '/old', {});
+    expect(res.status, 404);
+    expect(res.json, isEmpty);
   });
 
   test('nothing listening throws PeerUnreachable', () async {

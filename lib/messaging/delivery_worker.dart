@@ -13,6 +13,10 @@ import '../surat/surat_service.dart' show eventPath;
 const queueLifetimeMs = 7 * 24 * 60 * 60 * 1000;
 const _backoffMs = [5000, 30000, 120000, 300000];
 
+/// How long a surat event waits before trying a peer whose build has no
+/// event route again.
+const tooOldRetryMs = 60 * 60 * 1000;
+
 /// Sends queued deliveries (messages and receipts), retries with backoff,
 /// drops what is older than 7 days and expires unapproved drafts after 1 hour.
 class DeliveryWorker {
@@ -141,11 +145,19 @@ class DeliveryWorker {
   Future<bool> _dropIfTooOld(Delivery d, Peer? peer) async {
     if (_now() - d.createdAt <= queueLifetimeMs) return false;
     await _set(d, status: 'dropped', error: 'older than 7 days');
-    if (!d.messageId.startsWith('receipt:') &&
+    final name = peer?.personName ?? 'a teammate';
+    if (_pathOf(d) == eventPath) {
+      await notifier.show(
+        NotificationText(
+          "Couldn't reach $name for a surat update",
+          'The surat update waited 7 days for their Mac and was dropped.',
+        ),
+      );
+    } else if (!d.messageId.startsWith('receipt:') &&
         !d.messageId.startsWith(historyPrefix)) {
       await notifier.show(
         NotificationText(
-          "Couldn't deliver to ${peer?.personName ?? 'a teammate'}",
+          "Couldn't deliver to $name",
           'The message waited 7 days for their Mac and was dropped.',
         ),
       );
@@ -260,8 +272,9 @@ class DeliveryWorker {
           );
         }
       } else if (env['path'] == eventPath && res.status == 404) {
-        // A 1.0.x build has no event route.
-        await _set(d, status: 'dropped', error: 'too old for surat');
+        // A 1.0.x build has no event route. Keep it queued (within the 7
+        // days) so it lands once they update, without hammering them.
+        await _retry(d, 'too old for surat', waitMs: tooOldRetryMs);
         if (_tooOldNoticeSent.add(peer.deviceId)) {
           await notifier.show(
             NotificationText(
@@ -322,9 +335,13 @@ class DeliveryWorker {
     return (await q.get()).isNotEmpty;
   }
 
-  Future<void> _retry(Delivery d, String error) async {
+  static String? _pathOf(Delivery d) =>
+      (jsonDecode(d.envelopeJson) as Map)['path'] as String?;
+
+  Future<void> _retry(Delivery d, String error, {int? waitMs}) async {
     final attempts = d.attempts + 1;
-    final wait = _backoffMs[(attempts - 1).clamp(0, _backoffMs.length - 1)];
+    final wait =
+        waitMs ?? _backoffMs[(attempts - 1).clamp(0, _backoffMs.length - 1)];
     await (db.update(db.deliveries)..where(
           (x) =>
               x.messageId.equals(d.messageId) &

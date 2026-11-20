@@ -1,15 +1,21 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:agent_relay/config/app_config.dart';
 import 'package:agent_relay/crypto/identity_keys.dart';
 import 'package:agent_relay/data/relay_database.dart';
+import 'package:agent_relay/identity/local_identity.dart';
+import 'package:agent_relay/identity/secret_store.dart';
 import 'package:agent_relay/messaging/delivery_worker.dart';
 import 'package:agent_relay/messaging/message_service.dart';
 import 'package:agent_relay/node/notifier.dart';
 import 'package:agent_relay/ordering/hlc.dart';
 import 'package:agent_relay/peer/peer_client.dart';
+import 'package:agent_relay/peer/server_bootstrap.dart';
 import 'package:drift/drift.dart' hide isNull, isNotNull;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shelf/shelf.dart';
 
 import '../support/fixtures.dart';
 
@@ -397,21 +403,122 @@ void main() {
           ),
         );
 
-    test('old peer: 404 on /relay/event drops it and notifies once', () async {
+    test('old peer: 404 on /relay/event keeps it queued for an hour and '
+        'notifies once', () async {
       await queueEvent('e1');
       await queueEvent('e2');
       net.next = 404;
       await worker.runOnce();
-      expect((await delivery('e1')).status, 'dropped');
-      expect((await delivery('e2')).status, 'dropped');
+      for (final id in ['e1', 'e2']) {
+        final d = await delivery(id);
+        expect(
+          (d.status, d.nextAttemptAt, d.lastError),
+          ('queued', now + tooOldRetryMs, 'too old for surat'),
+        );
+      }
       expect(notes.shown.map((n) => n.toString()), [
         "Xavier's Agent Relay is too old for surat — ask them to update",
       ]);
 
       await queueEvent('e3');
       await worker.runOnce();
-      expect((await delivery('e3')).status, 'dropped');
+      expect((await delivery('e3')).status, 'queued');
       expect(notes.shown, hasLength(1));
+
+      // They update: the held events land.
+      now += tooOldRetryMs;
+      net.next = 200;
+      await worker.runOnce();
+      for (final id in ['e1', 'e2', 'e3']) {
+        expect((await delivery(id)).status, 'delivered');
+      }
+    });
+
+    test('an event dropped after 7 days says it was a surat update', () async {
+      await queueEvent('e1');
+      now += queueLifetimeMs + 1;
+      await worker.runOnce();
+      expect((await delivery('e1')).status, 'dropped');
+      expect(notes.shown.map((n) => n.toString()), [
+        "Couldn't reach Xavier for a surat update — "
+            'The surat update waited 7 days for their Mac and was dropped.',
+      ]);
+    });
+
+    group('against a 1.0.x Mac through the real PeerClient', () {
+      late Directory dir;
+      late ServerBootstrap old;
+      late String oldFp;
+      late LocalIdentity me;
+
+      setUpAll(() async {
+        dir = await tempDir('oldmac');
+        me = await LocalIdentity.create(
+          AppConfig(
+            dataDir: Directory('${dir.path}/me'),
+            peerPort: 1,
+            localPort: 2,
+            keychainPrefix: 'oldmac',
+          ),
+          InMemorySecretStore(),
+          personName: 'Irfan',
+          deviceName: 'A',
+        );
+        final cert = await realCert(Directory('${dir.path}/srv'));
+        oldFp = cert.fingerprint;
+        old = ServerBootstrap(
+          certPath: cert.certPath,
+          keyPath: cert.keyPath,
+          port: 0,
+          address: InternetAddress.loopbackIPv4,
+        );
+        // shelf_router's own 404 for a route 1.0.x never had: plain text.
+        await old.start(
+          handler: (req) => req.url.path == 'relay/event'
+              ? Response.notFound('Route not found')
+              : Response.ok(
+                  '{"received":true}',
+                  headers: {'content-type': 'application/json'},
+                ),
+        );
+      });
+      tearDownAll(() async {
+        await old.stop();
+        await dir.delete(recursive: true);
+      });
+
+      test(
+        'a plain-text 404 on /relay/event is "too old", not unreachable',
+        () async {
+          await (db.update(db.peers)).write(
+            PeersCompanion(
+              lastAddress: const Value('127.0.0.1'),
+              lastPort: Value(old.boundPort),
+              certFingerprint: Value(oldFp),
+            ),
+          );
+          final real = DeliveryWorker(
+            db: db,
+            transport: PeerClient(me, relayPort: 1, nowMs: () => now),
+            messages: svc,
+            notifier: notes,
+            nowMs: () => now,
+            onUnpaired: (id) async => unpaired.add(id),
+          );
+          await queueEvent('e1');
+          final m = await queuedMessage();
+          await real.runOnce();
+          final e = await delivery('e1');
+          expect(
+            (e.status, e.nextAttemptAt, e.lastError),
+            ('queued', now + tooOldRetryMs, 'too old for surat'),
+          );
+          expect((await delivery(m)).status, 'delivered');
+          expect(notes.shown.map((n) => n.title), [
+            "Xavier's Agent Relay is too old for surat",
+          ]);
+        },
+      );
     });
 
     test('a 404 on /relay/deliver drops without the surat notice', () async {
