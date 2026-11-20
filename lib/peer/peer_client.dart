@@ -61,6 +61,7 @@ class PeerClient implements PeerTransport {
   final Duration timeout;
   final int Function() _now;
 
+  @override
   Future<PeerResponse> post(
     PeerTarget t,
     String path,
