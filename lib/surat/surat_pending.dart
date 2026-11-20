@@ -131,7 +131,7 @@ class SuratPending {
       throw UnknownPending(pendingId);
     }
     if (channel.closedAt != null) throw const NotAllowed('the surat ended');
-    await db.transaction(() async {
+    await db.committing(() async {
       final id = const Uuid().v4();
       final now = _now();
       await db

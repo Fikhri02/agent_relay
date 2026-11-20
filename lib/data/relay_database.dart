@@ -24,6 +24,45 @@ class RelayDatabase extends _$RelayDatabase {
   static RelayDatabase open(File file) =>
       RelayDatabase(NativeDatabase.createInBackground(file));
 
+  var _commitDepth = 0;
+  final _afterCommit = <Future<void> Function()>{};
+
+  /// A transaction whose [afterCommit] work runs once the OUTERMOST one
+  /// started through here has committed (never inside it, never after a
+  /// rollback). Nest freely: only the outermost level flushes.
+  Future<T> committing<T>(Future<T> Function() body) async {
+    _commitDepth++;
+    final T out;
+    try {
+      out = await transaction(body);
+    } catch (_) {
+      if (_commitDepth == 1) _afterCommit.clear();
+      rethrow;
+    } finally {
+      _commitDepth--;
+    }
+    if (_commitDepth == 0) await _runAfterCommit();
+    return out;
+  }
+
+  /// Runs [work] now when no [committing] transaction is open, else once the
+  /// outermost one commits. Registering the same function twice runs it once.
+  Future<void> afterCommit(Future<void> Function() work) async {
+    if (_commitDepth > 0) {
+      _afterCommit.add(work);
+      return;
+    }
+    await work();
+  }
+
+  Future<void> _runAfterCommit() async {
+    while (_afterCommit.isNotEmpty) {
+      final work = _afterCommit.first;
+      _afterCommit.remove(work);
+      await work();
+    }
+  }
+
   @override
   int get schemaVersion => 2;
 

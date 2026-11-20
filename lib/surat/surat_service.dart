@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:drift/drift.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:uuid/uuid.dart';
 
 import '../crypto/identity_keys.dart';
@@ -51,7 +52,6 @@ class SuratService {
   final int Function() _now;
   final _changes = StreamController<SuratChange>.broadcast();
   final _reshares = <BecameMutual>[];
-  var _inPublish = 0;
   late final _projection = SuratProjection(
     db: db,
     me: me,
@@ -175,13 +175,7 @@ class SuratService {
   /// carry none. Events use seq 0 so message seqs stay contiguous. An ended
   /// surat takes no more events ([ChannelClosed]).
   Future<void> publish(Message draft) async {
-    _inPublish++;
-    try {
-      await db.transaction(() => _publishInTransaction(draft));
-    } finally {
-      _inPublish--;
-    }
-    if (_inPublish == 0) await _flushReshares();
+    await db.committing(() => _publishInTransaction(draft));
   }
 
   Future<void> _publishInTransaction(Message draft) async {
@@ -267,28 +261,44 @@ class SuratService {
   }
 
   /// Emits [changes]; each [BecameMutual] also re-shares my own history to
-  /// that member. Inside a publish transaction the re-share waits for the
-  /// commit, and a failure to queue never undoes what was committed.
+  /// that member. The re-share runs after the outermost [RelayDatabase.committing]
+  /// transaction has committed (at once when none is open), and a failure to
+  /// queue never undoes what was committed.
   Future<void> _announce(Iterable<SuratChange> changes) async {
     for (final c in changes) {
       _changes.add(c);
       if (c is BecameMutual) _reshares.add(c);
     }
-    if (_inPublish == 0) await _flushReshares();
+    if (_reshares.isNotEmpty) await db.afterCommit(_flushReshares);
   }
 
   Future<void> _flushReshares() async {
     while (_reshares.isNotEmpty) {
       final c = _reshares.removeAt(0);
       try {
+        final row =
+            await (db.select(db.channelMembers)..where(
+                  (m) =>
+                      m.channelId.equals(c.suratId) &
+                      m.deviceId.equals(c.deviceId),
+                ))
+                .getSingleOrNull();
+        if (row == null ||
+            row.myApproval != 'approved' ||
+            row.theirApproval != 'approved') {
+          continue; // no longer mutual (a rolled-back publish)
+        }
         final peer = await (db.select(
           db.peers,
         )..where((p) => p.deviceId.equals(c.deviceId))).getSingleOrNull();
-        if (peer != null && canTalk(peer)) {
-          await messages.reshareOwn(c.suratId, peer);
+        if (peer == null || !canTalk(peer)) {
+          debugPrint('history re-share skipped: ${c.deviceId} not reachable');
+          continue;
         }
-      } on Object {
+        await messages.reshareOwn(c.suratId, peer);
+      } on Object catch (e) {
         // History is best effort; the live path is unaffected.
+        debugPrint('history re-share to ${c.deviceId} failed: $e');
       }
     }
   }

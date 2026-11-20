@@ -158,7 +158,7 @@ class MessageService {
   /// Seals and queues a draft. Safe to call twice at once: only the first
   /// call sends. A draft older than 1 hour expires instead.
   Future<Message> approve(String messageId) async {
-    final changed = await db.transaction(() async {
+    final changed = await db.committing(() async {
       final m = await _get(messageId);
       if (m.status != 'awaiting_approval') return false;
       final mine =
@@ -315,7 +315,16 @@ class MessageService {
                     d.recipientDeviceId.equals(to.deviceId),
               ))
               .getSingleOrNull();
-      if (exists != null) continue;
+      if (exists != null) {
+        if (exists.status != 'dropped') continue;
+        // A copy that timed out is given another chance.
+        await (db.delete(db.deliveries)..where(
+              (d) =>
+                  d.messageId.equals(id) &
+                  d.recipientDeviceId.equals(to.deviceId),
+            ))
+            .go();
+      }
       Envelope env(SealedEnvelope? sealed) => Envelope(
         id: m.id,
         channelId: m.channelId,

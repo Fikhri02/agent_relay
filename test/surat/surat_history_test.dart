@@ -1,9 +1,8 @@
 import 'dart:convert';
 
-
-
 import 'package:agent_relay/data/relay_database.dart';
 import 'package:agent_relay/messaging/envelope.dart';
+import 'package:agent_relay/messaging/message_service.dart';
 import 'package:agent_relay/surat/surat_service.dart';
 import 'package:drift/drift.dart' hide isNull, isNotNull;
 import 'package:flutter_test/flutter_test.dart';
@@ -291,4 +290,73 @@ void main() {
       );
     },
   );
+
+  test('a failing re-share leaves the committed decision and runs after the commit', () async {
+    final suratId = await tripWithBob();
+    final newcomer = await carolInvited(suratId);
+    final spy = _Spy(bob);
+    final service = SuratService(
+      db: bob.db,
+      messages: spy,
+      keys: bob.keys,
+      me: bob.surat.me,
+      clock: bob.surat.clock,
+      nowMs: () => now,
+    );
+    spy.publishEvent = service.publish;
+
+    now += 1000;
+    await service.decide(newcomer, approve: true);
+
+    expect(spy.calls, 1);
+    expect(spy.insideTransaction, isFalse);
+    expect(
+      (await bob.member(suratId, carol.id))!.myApproval,
+      'approved',
+      reason: 'the decision stays committed although the re-share threw',
+    );
+    expect((await bob.db.drafts()), isEmpty);
+  });
+
+  test(
+    'a dropped history copy is queued again when the pair becomes mutual again',
+    () async {
+      final suratId = await tripWithBob();
+      final id = await send(alice, suratId, 'again');
+      final bobPeer = await alice.peerOf(bob);
+      await alice.messages.reshareOwn(suratId, bobPeer);
+      final key = 'history:$id:${bob.id}';
+      await (alice.db.update(alice.db.deliveries)
+            ..where((d) => d.messageId.equals(key)))
+          .write(const DeliveriesCompanion(status: Value('dropped')));
+
+      expect(await alice.messages.reshareOwn(suratId, bobPeer), 1);
+
+      final row = (await historyFor(alice, bob)).single;
+      expect((row.messageId, row.status, row.attempts), (key, 'queued', 0));
+    },
+  );
+}
+
+class _Spy extends MessageService {
+  _Spy(Side s)
+    : db_ = s.db,
+      super(
+        db: s.db,
+        myDeviceId: s.id,
+        myBox: s.keys.box,
+        clock: s.surat.clock,
+        nowMs: () => now,
+      );
+  final RelayDatabase db_;
+  int calls = 0;
+  bool? insideTransaction;
+
+  @override
+  Future<int> reshareOwn(String channelId, Peer to) async {
+    calls++;
+    // ignore: invalid_use_of_internal_member
+    insideTransaction = db_.resolvedEngine != db_;
+    throw StateError('boom');
+  }
 }
