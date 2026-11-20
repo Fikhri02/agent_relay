@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:agent_relay/crypto/identity_keys.dart';
+import 'package:agent_relay/crypto/sealed_box.dart';
 import 'package:agent_relay/data/relay_database.dart';
 import 'package:agent_relay/messaging/envelope.dart';
 import 'package:agent_relay/messaging/message_service.dart';
@@ -257,23 +258,39 @@ void main() {
     expect((await bob.db.channelMessages(ch)).single.status, 'read');
   });
 
-  test('the person seeing a message does not mark it read for the agent', () async {
-    await sendAndDeliver(alice, bob, 'x');
-    await bob.svc.read(ch, by: Reader.person);
-    expect(await bob.svc.read(ch, unreadOnly: true, by: Reader.person), isEmpty);
-    final forAgent = await bob.svc.read(ch, unreadOnly: true, by: Reader.agent);
-    expect(forAgent.single.body, 'x');
-    expect(await bob.svc.read(ch, unreadOnly: true, by: Reader.agent), isEmpty);
-  });
+  test(
+    'the person seeing a message does not mark it read for the agent',
+    () async {
+      await sendAndDeliver(alice, bob, 'x');
+      await bob.svc.read(ch, by: Reader.person);
+      expect(
+        await bob.svc.read(ch, unreadOnly: true, by: Reader.person),
+        isEmpty,
+      );
+      final forAgent = await bob.svc.read(
+        ch,
+        unreadOnly: true,
+        by: Reader.agent,
+      );
+      expect(forAgent.single.body, 'x');
+      expect(
+        await bob.svc.read(ch, unreadOnly: true, by: Reader.agent),
+        isEmpty,
+      );
+    },
+  );
 
-  test('the agent reading a message does not clear it for the person', () async {
-    await sendAndDeliver(alice, bob, 'x');
-    await bob.svc.read(ch, by: Reader.agent);
-    expect(await bob.db.unreadCounts(by: Reader.person), {ch: 1});
-    expect(await bob.db.unreadCounts(by: Reader.agent), isEmpty);
-    await bob.svc.read(ch, by: Reader.person);
-    expect(await bob.db.unreadCounts(by: Reader.person), isEmpty);
-  });
+  test(
+    'the agent reading a message does not clear it for the person',
+    () async {
+      await sendAndDeliver(alice, bob, 'x');
+      await bob.svc.read(ch, by: Reader.agent);
+      expect(await bob.db.unreadCounts(by: Reader.person), {ch: 1});
+      expect(await bob.db.unreadCounts(by: Reader.agent), isEmpty);
+      await bob.svc.read(ch, by: Reader.person);
+      expect(await bob.db.unreadCounts(by: Reader.person), isEmpty);
+    },
+  );
 
   group('read receipts', () {
     test('agent read queues one agent_read receipt to the sender; the sender records it', () async {
@@ -389,4 +406,216 @@ void main() {
       expect(await queued(alice, bob), isEmpty);
     },
   );
+
+  group('surat', () {
+    late Party carol;
+
+    setUp(() async {
+      carol = await make('Carol', () => 1700000000000);
+    });
+    tearDown(() => carol.db.close());
+
+    /// Alice's side: bob mutual, carol not.
+    Future<void> aliceSurat({
+      String carolState = 'member',
+      String? carolLeft,
+      int? closedAt,
+    }) async {
+      await insertPeer(alice.db, carol.keys, name: 'Carol');
+      await alice.db
+          .into(alice.db.channels)
+          .insert(
+            ChannelsCompanion.insert(
+              id: 'surat-1',
+              kind: 'surat',
+              createdAt: 1,
+              name: const Value('Trip'),
+              closedAt: Value(closedAt),
+            ),
+          );
+      Future<void> row(
+        String id, {
+        String state = 'member',
+        String? mine,
+        String? theirs,
+        String? left,
+      }) => alice.db
+          .into(alice.db.channelMembers)
+          .insert(
+            ChannelMembersCompanion.insert(
+              channelId: 'surat-1',
+              deviceId: id,
+              joinedHlc: '0000000000000-00000',
+              state: Value(state),
+              myApproval: Value(mine),
+              theirApproval: Value(theirs),
+              leftHlc: Value(left),
+            ),
+          );
+      await row(alice.id);
+      await row(bob.id, mine: 'approved', theirs: 'approved');
+      await row(
+        carol.id,
+        state: carolState,
+        mine: 'approved',
+        theirs: null,
+        left: carolLeft,
+      );
+    }
+
+    /// The receiving side: sender and I are members.
+    Future<void> receiverSurat(Party me) async {
+      if (me != bob) await insertPeer(me.db, alice.keys, name: 'Alice');
+      await me.db
+          .into(me.db.channels)
+          .insert(
+            ChannelsCompanion.insert(
+              id: 'surat-1',
+              kind: 'surat',
+              createdAt: 1,
+              name: const Value('Trip'),
+            ),
+          );
+      for (final id in [alice.id, me.id]) {
+        await me.db
+            .into(me.db.channelMembers)
+            .insert(
+              ChannelMembersCompanion.insert(
+                channelId: 'surat-1',
+                deviceId: id,
+                joinedHlc: '0000000000000-00000',
+              ),
+            );
+      }
+    }
+
+    Future<Map<String, dynamic>> deliver(Party to) async {
+      final d = await alice.svc.draft(channelId: 'surat-1', body: 'secret');
+      await alice.svc.approve(d.id);
+      return (await queued(
+        alice,
+        to,
+      )).firstWhere((q) => q.$1 == '/relay/deliver').$2;
+    }
+
+    test('mutual pair reads; the other member gets a locked placeholder with the same id, hlc and seq', () async {
+      await aliceSurat();
+      await receiverSurat(bob);
+      await receiverSurat(carol);
+      final toBob = await deliver(bob);
+      final toCarol = await deliver(carol);
+      final b = await bob.svc.receive(
+        Envelope.fromJson(toBob),
+        from: await bob.peer(alice.id),
+      );
+      final c = await carol.svc.receive(
+        Envelope.fromJson(toCarol),
+        from: await carol.peer(alice.id),
+      );
+      expect(b.message.body, 'secret');
+      expect(b.message.status, 'unread');
+      expect(c.message.status, 'locked');
+      expect(c.message.body, isNull);
+      expect(c.message.id, b.message.id);
+      expect(c.message.hlc, b.message.hlc);
+      expect(c.message.seq, b.message.seq);
+    });
+
+    test('a placeholder carries no ciphertext', () async {
+      await aliceSurat();
+      final toCarol = await deliver(carol);
+      expect(toCarol['sealed'], isNull);
+      expect(jsonEncode(toCarol), isNot(contains('secret')));
+    });
+
+    test('a half-approved pair also gets a placeholder', () async {
+      await aliceSurat();
+      await alice.db.customStatement(
+        "UPDATE channel_members SET their_approval='approved', my_approval=NULL WHERE device_id='${carol.id}'",
+      );
+      expect((await deliver(carol))['sealed'], isNull);
+    });
+
+    test(
+      "history envelope unlocks C's placeholder without an incoming event",
+      () async {
+        await aliceSurat();
+        await receiverSurat(carol);
+        final ph = await deliver(carol);
+        await carol.svc.receive(
+          Envelope.fromJson(ph),
+          from: await carol.peer(alice.id),
+        );
+        final seen = <Message>[];
+        final sub = carol.svc.incoming.listen(seen.add);
+        final e = Envelope.fromJson(ph);
+        final plain = utf8.encode(jsonEncode({'body': 'secret'}));
+        final hist = Envelope(
+          id: e.id,
+          channelId: e.channelId,
+          kind: e.kind,
+          from: e.from,
+          sentAt: e.sentAt,
+          hlc: e.hlc,
+          seq: e.seq,
+          history: true,
+          sealed: await seal(
+            plain,
+            recipientBoxPub: carol.keys.boxPub,
+            aad: e.aad,
+          ),
+        );
+        final r = await carol.svc.receive(
+          hist,
+          from: await carol.peer(alice.id),
+        );
+        await Future<void>.delayed(Duration.zero);
+        await sub.cancel();
+        expect(r.message.status, 'unread');
+        expect(r.message.body, 'secret');
+        expect(seen, isEmpty);
+      },
+    );
+
+    test('a left member gets no copy', () async {
+      await aliceSurat(carolState: 'left', carolLeft: '0000000000001-00000');
+      final d = await alice.svc.draft(channelId: 'surat-1', body: 'x');
+      await alice.svc.approve(d.id);
+      expect(await queued(alice, carol), isEmpty);
+      expect((await queued(alice, bob)).length, 1);
+    });
+
+    test('drafting in an ended surat throws ChannelClosed', () async {
+      await aliceSurat(closedAt: 5);
+      expect(
+        () => alice.svc.draft(channelId: 'surat-1', body: 'x'),
+        throwsA(isA<ChannelClosed>()),
+      );
+    });
+
+    test('drafting when I am not a current member throws NotAMember', () async {
+      await aliceSurat();
+      await alice.db.customStatement(
+        "UPDATE channel_members SET state='left', left_hlc='0000000000001-00000' WHERE device_id='${alice.id}'",
+      );
+      expect(
+        () => alice.svc.draft(channelId: 'surat-1', body: 'x'),
+        throwsA(isA<NotAMember>()),
+      );
+    });
+
+    test('receiving when I am only invited is refused', () async {
+      await receiverSurat(bob);
+      await bob.db.customStatement(
+        "UPDATE channel_members SET state='invited' WHERE device_id='${bob.id}'",
+      );
+      await aliceSurat();
+      final env = await deliver(bob);
+      final from = await bob.peer(alice.id);
+      expect(
+        () => bob.svc.receive(Envelope.fromJson(env), from: from),
+        throwsA(isA<NotAMember>()),
+      );
+    });
+  });
 }

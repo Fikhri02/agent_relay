@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 import '../crypto/sealed_box.dart';
 import '../data/relay_database.dart';
 import '../ordering/hlc.dart';
+import '../peer/trust.dart';
 import 'envelope.dart';
 
 export '../data/relay_database.dart' show Reader;
@@ -100,6 +101,15 @@ class MessageService {
     )..where((c) => c.id.equals(channelId))).getSingleOrNull();
     if (channel == null) throw const UnknownChannel();
     if (channel.closedAt != null) throw const ChannelClosed();
+    final mine =
+        await (db.select(db.channelMembers)..where(
+              (m) =>
+                  m.channelId.equals(channelId) & m.deviceId.equals(myDeviceId),
+            ))
+            .getSingleOrNull();
+    if (mine == null || mine.state != 'member' || mine.leftHlc != null) {
+      throw const NotAMember();
+    }
     final now = _now();
     final id = const Uuid().v4();
     await db
@@ -139,15 +149,16 @@ class MessageService {
       }
       final hlc = clock.tick().encode();
       final seq = await db.nextSeq(m.channelId, myDeviceId);
-      final recipients = await _pairedRecipients(m.channelId);
+      final recipients = await _recipients(m.channelId);
       final plain = utf8.encode(
         jsonEncode({
           'body': m.body,
           if (m.contextJson != null) 'context': jsonDecode(m.contextJson!),
         }),
       );
-      for (final peer in recipients) {
-        Envelope env(SealedEnvelope sealed) => Envelope(
+      for (final r in recipients) {
+        final peer = r.peer;
+        Envelope env(SealedEnvelope? sealed) => Envelope(
           id: m.id,
           channelId: m.channelId,
           kind: m.kind,
@@ -158,14 +169,13 @@ class MessageService {
           replyTo: m.replyTo,
           sealed: sealed,
         );
-        final aad = env(
-          const SealedEnvelope(eph: '', nonce: '', ct: '', mac: ''),
-        ).aad;
-        final sealed = await seal(
-          plain,
-          recipientBoxPub: peer.boxPub,
-          aad: aad,
-        );
+        SealedEnvelope? sealed;
+        if (r.sealed) {
+          final aad = env(
+            const SealedEnvelope(eph: '', nonce: '', ct: '', mac: ''),
+          ).aad;
+          sealed = await seal(plain, recipientBoxPub: peer.boxPub, aad: aad);
+        }
         await _queue(
           m.id,
           peer.deviceId,
@@ -198,7 +208,14 @@ class MessageService {
     _changes.add(await _get(messageId));
   }
 
-  Future<List<Peer>> _pairedRecipients(String channelId) async {
+  /// Who gets a copy. A private channel seals for its paired member. A surat
+  /// sends to every current member I can talk to, sealed only when both of us
+  /// approved each other; the rest get a placeholder with no ciphertext.
+  Future<List<({Peer peer, bool sealed})>> _recipients(String channelId) async {
+    final channel = await (db.select(
+      db.channels,
+    )..where((c) => c.id.equals(channelId))).getSingle();
+    final surat = channel.kind == 'surat';
     final q =
         db.select(db.channelMembers).join([
           innerJoin(
@@ -207,10 +224,25 @@ class MessageService {
           ),
         ])..where(
           db.channelMembers.channelId.equals(channelId) &
-              db.channelMembers.leftHlc.isNull() &
-              db.peers.trust.equals('paired'),
+              db.channelMembers.leftHlc.isNull(),
         );
-    return [for (final row in await q.get()) row.readTable(db.peers)];
+    final out = <({Peer peer, bool sealed})>[];
+    for (final row in await q.get()) {
+      final peer = row.readTable(db.peers);
+      final member = row.readTable(db.channelMembers);
+      if (!surat) {
+        if (peer.trust == 'paired') out.add((peer: peer, sealed: true));
+        continue;
+      }
+      if (member.state != 'member' || !canTalk(peer)) continue;
+      out.add((
+        peer: peer,
+        sealed:
+            member.myApproval == 'approved' &&
+            member.theirApproval == 'approved',
+      ));
+    }
+    return out;
   }
 
   Future<void> _queue(
@@ -250,7 +282,10 @@ class MessageService {
               (m) => m.channelId.equals(e.channelId) & m.leftHlc.isNull(),
             ))
             .get();
-    final ids = members.map((m) => m.deviceId).toSet();
+    final ids = {
+      for (final m in members)
+        if (channel?.kind != 'surat' || m.state == 'member') m.deviceId,
+    };
     if (!ids.contains(from.deviceId) || !ids.contains(myDeviceId)) {
       throw const NotAMember();
     }
@@ -281,27 +316,28 @@ class MessageService {
     } on Object {
       status = 'locked';
     }
-    final inserted = await db.insertIncomingIfNew(
-      MessagesCompanion.insert(
-        id: e.id,
-        channelId: e.channelId,
-        kind: e.kind,
-        fromDeviceId: e.from,
-        sentAt: e.sentAt,
-        hlc: Value(e.hlc),
-        seq: Value(e.seq),
-        body: Value(body),
-        contextJson: Value(contextJson),
-        replyTo: Value(e.replyTo),
-        direction: 'in',
-        status: status,
-        arrivedLate: Value(now - e.sentAt > lateAfterMs),
-        createdAt: now,
-        receivedAt: Value(now),
-      ),
+    final row = MessagesCompanion.insert(
+      id: e.id,
+      channelId: e.channelId,
+      kind: e.kind,
+      fromDeviceId: e.from,
+      sentAt: e.sentAt,
+      hlc: Value(e.hlc),
+      seq: Value(e.seq),
+      body: Value(body),
+      contextJson: Value(contextJson),
+      replyTo: Value(e.replyTo),
+      direction: 'in',
+      status: status,
+      arrivedLate: Value(now - e.sentAt > lateAfterMs),
+      createdAt: now,
+      receivedAt: Value(now),
     );
+    final inserted = e.history
+        ? await db.insertOrUnlock(row)
+        : await db.insertIncomingIfNew(row);
     final m = await _get(e.id);
-    if (inserted) _incoming.add(m);
+    if (inserted && !e.history) _incoming.add(m);
     return (duplicate: !inserted, message: m);
   }
 
