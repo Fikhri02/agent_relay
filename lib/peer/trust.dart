@@ -85,7 +85,9 @@ Future<void> addOrRefreshContact(
 
 /// Deletes `surat_contact` peers that share no open surat with me. A contact
 /// with a delivery still queued (the leave or last event that ended our
-/// shared surat) is kept until a later call, so that event can reach it.
+/// shared surat) is kept until a later call, so that event can reach it. A
+/// former paired peer (one with a private channel here) goes back to
+/// `unpaired` instead, so that closed channel keeps its name.
 Future<void> forgetLoneContacts(RelayDatabase db, String myDeviceId) async {
   final contacts = await (db.select(
     db.peers,
@@ -100,7 +102,26 @@ Future<void> forgetLoneContacts(RelayDatabase db, String myDeviceId) async {
               )
               ..limit(1))
             .get();
-    if (waiting.isEmpty && !await sharesSurat(db, myDeviceId, c.deviceId)) {
+    if (waiting.isNotEmpty || await sharesSurat(db, myDeviceId, c.deviceId)) {
+      continue;
+    }
+    final private =
+        await (db.select(db.channels).join([
+                innerJoin(
+                  db.channelMembers,
+                  db.channelMembers.channelId.equalsExp(db.channels.id),
+                ),
+              ])
+              ..where(
+                db.channels.kind.equals('private') &
+                    db.channelMembers.deviceId.equals(c.deviceId),
+              )
+              ..limit(1))
+            .get();
+    if (private.isNotEmpty) {
+      await (db.update(db.peers)..where((p) => p.deviceId.equals(c.deviceId)))
+          .write(const PeersCompanion(trust: Value('unpaired')));
+    } else {
       await (db.delete(
         db.peers,
       )..where((p) => p.deviceId.equals(c.deviceId))).go();

@@ -195,4 +195,41 @@ void main() {
       ['hello all'],
     );
   });
+
+  test(
+    'a former paired peer keeps its name once our shared surat ends',
+    () async {
+      final a = await start('A', 'Irfan'), b = await start('B', 'Xavier');
+      await pair(a, b);
+      final s = await suratOf(a, b);
+      await a.pairing.unpair(id(b));
+      expect((await peerOn(a, b))!.trust, trustSuratContact);
+
+      await a.messages.approve(await a.surat.draftLeave(s));
+      await deliverAll([a, b]);
+      await a.surat.rebuild(s); // any later projection forgets lone contacts
+
+      final kept = await peerOn(a, b);
+      expect((kept?.trust, kept?.personName), ('unpaired', 'Xavier'));
+      final token = await File('${a.config.dataDir.path}/local-token')
+          .readAsString();
+      final client = HttpClient();
+      try {
+        final req = await client.get(
+          '127.0.0.1',
+          a.local.boundPort,
+          '/channels',
+        );
+        req.headers.set('authorization', 'Bearer $token');
+        final res = await req.close();
+        final rows = (jsonDecode(
+          await res.transform(utf8.decoder).join(),
+        ) as List).cast<Map>();
+        final private = rows.firstWhere((r) => r['kind'] == 'private');
+        expect((private['name'], private['closed']), ('Xavier', true));
+      } finally {
+        client.close(force: true);
+      }
+    },
+  );
 }
