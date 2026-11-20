@@ -474,7 +474,8 @@ class MessageService {
       replyTo: Value(e.replyTo),
       direction: 'in',
       status: status,
-      arrivedLate: Value(now - e.sentAt > lateAfterMs),
+      // A history copy is old by design, not late.
+      arrivedLate: Value(!e.history && now - e.sentAt > lateAfterMs),
       createdAt: now,
       receivedAt: Value(now),
     );
@@ -482,7 +483,9 @@ class MessageService {
         ? await db.insertOrUnlock(row)
         : await db.insertIncomingIfNew(row);
     final m = await _get(e.id);
-    if (inserted && !e.history) _incoming.add(m);
+    // A history copy raises no notification, but an open timeline and the
+    // badges must still see it (a placeholder may just have unlocked).
+    if (inserted) (e.history ? _changes : _incoming).add(m);
     return (duplicate: !inserted, message: m);
   }
 

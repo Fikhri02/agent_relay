@@ -190,6 +190,26 @@ void main() {
     );
   });
 
+  test('a history copy refreshes open views (changes) and is never marked '
+      'arrived late', () async {
+    final suratId = await tripWithBob();
+    final id = await send(alice, suratId, 'old news');
+    // Bob never got the live copy; the history copy comes much later.
+    await alice.db.delete(alice.db.deliveries).go();
+    now += 60 * 60 * 1000;
+    final changed = <Message>[];
+    final sub = bob.messages.changes.listen(changed.add);
+
+    await alice.messages.reshareOwn(suratId, await alice.peerOf(bob));
+    await flush(alice, bob);
+    await settle();
+    await sub.cancel();
+
+    expect(changed.map((m) => m.id), contains(id));
+    final row = (await inbox(bob, suratId)).firstWhere((m) => m.id == id);
+    expect((row.body, row.arrivedLate), ('old news', false));
+  });
+
   test('decline then approve between existing members unlocks earlier placeholders on both sides', () async {
     final suratId = await tripWithBob();
     final newcomer = await carolInvited(suratId);
