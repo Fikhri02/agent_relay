@@ -249,6 +249,8 @@ class LocalServer {
       return _json(404, {'error': 'unknown_channel'});
     } on ChannelClosed {
       return _json(409, {'error': 'channel_closed'});
+    } on NotAMember {
+      return _json(403, {'error': 'not_a_member'});
     }
   }
 
@@ -280,7 +282,14 @@ class LocalServer {
         'status': draft.status,
       });
     }
-    var m = await messages.approve(id);
+    Message m;
+    try {
+      m = await messages.approve(id);
+    } on NotAMember {
+      return _json(403, {'error': 'not_a_member', 'status': 'discarded'});
+    } on ChannelClosed {
+      return _json(409, {'error': 'channel_closed', 'status': 'discarded'});
+    }
     final deliver = deliverNow;
     if (deliver != null && m.status == 'queued') {
       try {

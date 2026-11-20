@@ -399,6 +399,18 @@ class RelayScriptTest(unittest.TestCase):
         self.assertEqual(r.returncode, 1, self.output(r))
         self.assertIn("d-404", r.stderr)
 
+    def test_approve_refused_draft_says_why_and_that_it_was_discarded(self):
+        cases = [(403, "not_a_member", "no longer a member"),
+                 (409, "channel_closed", "has ended")]
+        for code, err, words in cases:
+            self.relay.state["approve"] = {"code": code,
+                                           "json": {"error": err, "status": "discarded"}}
+            r = self.run_relay("approve", "d-42")
+            self.assertEqual(r.returncode, 1, self.output(r))
+            self.assertIn(words, r.stderr)
+            self.assertIn("discarded", r.stderr)
+            self.assertNotIn("Traceback", r.stderr)
+
     def test_discard(self):
         r = self.run_relay("discard", "d-42")
         self.assertEqual(r.returncode, 0, self.output(r))
@@ -582,7 +594,7 @@ class RelayScriptTest(unittest.TestCase):
 
     def test_decide_error_codes(self):
         cases = [(409, "already_approved", "Already"), (404, "unknown_pending", "No pending"),
-                 (403, "not_allowed", "ended")]
+                 (403, "not_allowed", "ended"), (409, "channel_closed", "ended")]
         for code, err, word in cases:
             self.relay.state["decide"] = {"code": code, "json": {"error": err}}
             r = self.run_relay("decide", "newcomer:s-1:dev-t", "approve")

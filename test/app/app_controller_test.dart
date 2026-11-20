@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:agent_relay/app/app_controller.dart';
 import 'package:agent_relay/config/app_config.dart';
+import 'package:agent_relay/data/relay_database.dart';
 import 'package:agent_relay/identity/secret_store.dart';
 import 'package:agent_relay/node/notifier.dart';
 import 'package:agent_relay/node/relay_node.dart';
@@ -361,6 +362,43 @@ void main() {
           'Xavier left',
           'Surat ended — Irfan is the last member',
         ]);
+      },
+    );
+
+    test('Send on a draft made before I left discards it and says why, '
+        'without an unhandled error', () async {
+      await startC('Cara', 'Cara Mac');
+      final s = await aCreates([b]);
+      await accepts(b, s);
+      final d = await a.messages.draft(channelId: s, body: 'late');
+      await settle();
+      await a.messages.approve(await a.surat.draftLeave(s));
+      await settle();
+      notesA.actions[d.id]!(0); // Send, unawaited like the real button
+      await settle();
+      final row = await (a.db.select(
+        a.db.messages,
+      )..where((x) => x.id.equals(d.id))).getSingle();
+      expect(row.status, 'discarded');
+      expect(notesA.shown.last.toString(), contains('Not sent'));
+      expect(ctl.awaitingApproval, 0);
+    });
+
+    test(
+      'answering an invite to a surat that ends meanwhile does not throw',
+      () async {
+        await startC('Cara', 'Cara Mac');
+        final create = await b.surat.draftCreate('Other', [id(a)]);
+        await b.messages.approve(create);
+        await deliverAll();
+        final s = (await (b.db.select(
+          b.db.messages,
+        )..where((x) => x.id.equals(create))).getSingle()).channelId;
+        final answer = ctl.decide('invite:$s:${id(a)}', approve: true);
+        await (a.db.update(a.db.channels)..where((c) => c.id.equals(s))).write(
+          const ChannelsCompanion(closedAt: Value(5)),
+        );
+        await answer;
       },
     );
   });

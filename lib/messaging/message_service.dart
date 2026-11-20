@@ -157,85 +157,111 @@ class MessageService {
   }
 
   /// Seals and queues a draft. Safe to call twice at once: only the first
-  /// call sends. A draft older than 1 hour expires instead.
+  /// call sends. A draft older than 1 hour expires instead. A draft that can
+  /// no longer go (I left the channel: [NotAMember]; it closed:
+  /// [ChannelClosed]) is marked `discarded` and the reason rethrown.
   Future<Message> approve(String messageId) async {
-    final changed = await db.committing(() async {
-      final m = await _get(messageId);
-      if (m.status != 'awaiting_approval') return false;
-      final mine =
-          await (db.select(db.channelMembers)..where(
-                (x) =>
-                    x.channelId.equals(m.channelId) &
-                    x.deviceId.equals(myDeviceId),
-              ))
-              .getSingleOrNull();
-      if (!_current(mine, event: m.kind == 'event')) {
-        throw const NotAMember();
-      }
-      final now = _now();
-      if (now - m.createdAt > draftLifetimeMs) {
-        await (db.update(db.messages)..where((x) => x.id.equals(m.id))).write(
-          const MessagesCompanion(status: Value('expired')),
-        );
-        if (m.kind == 'event') await dropEvent?.call(m);
-        return true;
-      }
-      if (m.kind == 'event') {
-        final publish = publishEvent;
-        if (publish == null) throw StateError('no surat service for events');
-        await publish(m);
-        return true;
-      }
-      final hlc = clock.tick().encode();
-      final seq = await db.nextSeq(m.channelId, myDeviceId);
-      final recipients = await _recipients(m.channelId);
-      final plain = utf8.encode(
-        jsonEncode({
-          'body': m.body,
-          if (m.contextJson != null) 'context': jsonDecode(m.contextJson!),
-        }),
-      );
-      for (final r in recipients) {
-        final peer = r.peer;
-        Envelope env(SealedEnvelope? sealed) => Envelope(
-          id: m.id,
-          channelId: m.channelId,
-          kind: m.kind,
-          from: myDeviceId,
-          sentAt: now,
-          hlc: hlc,
-          seq: seq,
-          replyTo: m.replyTo,
-          sealed: sealed,
-        );
-        SealedEnvelope? sealed;
-        if (r.sealed) {
-          final aad = env(
-            const SealedEnvelope(eph: '', nonce: '', ct: '', mac: ''),
-          ).aad;
-          sealed = await seal(plain, recipientBoxPub: peer.boxPub, aad: aad);
+    final bool changed;
+    try {
+      changed = await db.committing(() async {
+        final m = await _get(messageId);
+        if (m.status != 'awaiting_approval') return false;
+        final mine =
+            await (db.select(db.channelMembers)..where(
+                  (x) =>
+                      x.channelId.equals(m.channelId) &
+                      x.deviceId.equals(myDeviceId),
+                ))
+                .getSingleOrNull();
+        if (!_current(mine, event: m.kind == 'event')) {
+          throw const NotAMember();
         }
-        await _queue(
-          m.id,
-          peer.deviceId,
-          '/relay/deliver',
-          env(sealed).toJson(),
-          now,
+        final channel = await (db.select(
+          db.channels,
+        )..where((c) => c.id.equals(m.channelId))).getSingle();
+        if (channel.closedAt != null) throw const ChannelClosed();
+        final now = _now();
+        if (now - m.createdAt > draftLifetimeMs) {
+          await (db.update(db.messages)..where((x) => x.id.equals(m.id))).write(
+            const MessagesCompanion(status: Value('expired')),
+          );
+          if (m.kind == 'event') await dropEvent?.call(m);
+          return true;
+        }
+        if (m.kind == 'event') {
+          final publish = publishEvent;
+          if (publish == null) throw StateError('no surat service for events');
+          await publish(m);
+          return true;
+        }
+        final hlc = clock.tick().encode();
+        final seq = await db.nextSeq(m.channelId, myDeviceId);
+        final recipients = await _recipients(m.channelId);
+        final plain = utf8.encode(
+          jsonEncode({
+            'body': m.body,
+            if (m.contextJson != null) 'context': jsonDecode(m.contextJson!),
+          }),
         );
-      }
-      await (db.update(db.messages)..where((x) => x.id.equals(m.id))).write(
-        MessagesCompanion(
-          status: const Value('queued'),
-          hlc: Value(hlc),
-          seq: Value(seq),
-          sentAt: Value(now),
-        ),
-      );
-      return true;
-    });
+        for (final r in recipients) {
+          final peer = r.peer;
+          Envelope env(SealedEnvelope? sealed) => Envelope(
+            id: m.id,
+            channelId: m.channelId,
+            kind: m.kind,
+            from: myDeviceId,
+            sentAt: now,
+            hlc: hlc,
+            seq: seq,
+            replyTo: m.replyTo,
+            sealed: sealed,
+          );
+          SealedEnvelope? sealed;
+          if (r.sealed) {
+            final aad = env(
+              const SealedEnvelope(eph: '', nonce: '', ct: '', mac: ''),
+            ).aad;
+            sealed = await seal(plain, recipientBoxPub: peer.boxPub, aad: aad);
+          }
+          await _queue(
+            m.id,
+            peer.deviceId,
+            '/relay/deliver',
+            env(sealed).toJson(),
+            now,
+          );
+        }
+        await (db.update(db.messages)..where((x) => x.id.equals(m.id))).write(
+          MessagesCompanion(
+            status: const Value('queued'),
+            hlc: Value(hlc),
+            seq: Value(seq),
+            sentAt: Value(now),
+          ),
+        );
+        return true;
+      });
+    } on NotAMember {
+      await _refused(messageId);
+      rethrow;
+    } on ChannelClosed {
+      await _refused(messageId);
+      rethrow;
+    }
     final out = await _get(messageId);
     if (changed) _changes.add(out);
     return out;
+  }
+
+  /// Discards a draft whose approval was refused, so it doesn't linger.
+  Future<void> _refused(String messageId) async {
+    final m = await _get(messageId);
+    if (m.status != 'awaiting_approval') return;
+    await (db.update(db.messages)..where((x) => x.id.equals(messageId))).write(
+      const MessagesCompanion(status: Value('discarded')),
+    );
+    if (m.kind == 'event') await dropEvent?.call(m);
+    _changes.add(await _get(messageId));
   }
 
   Future<void> discard(String messageId) async {

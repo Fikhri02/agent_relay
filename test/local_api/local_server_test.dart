@@ -848,6 +848,105 @@ void main() {
       );
     });
 
+    test('send into a surat I am only invited to, or left, is 403 '
+        'not_a_member', () async {
+      await suratRow(
+        id: 'inv',
+        rows: {
+          myId: row('inv', '0000000000001-00000', state: 'invited'),
+          xavierId: row('inv', '0000000000002-00000'),
+        },
+      );
+      await suratRow(
+        id: 'gone',
+        rows: {
+          myId: row('gone', '0000000000001-00000', state: 'left'),
+          xavierId: row('gone', '0000000000002-00000'),
+        },
+      );
+      for (final s in ['inv', 'gone']) {
+        expect(
+          await call('POST', '/channels/$s/send', body: {'body': 'x'}),
+          res(403, {'error': 'not_a_member'}),
+        );
+      }
+    });
+
+    Future<Message> draftRow(String id) =>
+        (db.select(db.messages)..where((m) => m.id.equals(id))).getSingle();
+
+    test('approving a draft made before I left is 403 not_a_member and '
+        'discards it', () async {
+      await suratRow(
+        id: 's3',
+        rows: {
+          myId: row('s3', '0000000000001-00000'),
+          xavierId: row('s3', '0000000000002-00000'),
+        },
+      );
+      final (_, d) = await call(
+        'POST',
+        '/channels/s3/send',
+        body: {'body': 'late'},
+      );
+      await (db.update(db.channelMembers)
+            ..where((m) => m.channelId.equals('s3') & m.deviceId.equals(myId)))
+          .write(
+            const ChannelMembersCompanion(
+              state: Value('left'),
+              leftHlc: Value('0000000000009-00000'),
+            ),
+          );
+      expect(
+        await call('POST', '/outbox/${d['id']}/approve'),
+        res(403, {'error': 'not_a_member', 'status': 'discarded'}),
+      );
+      expect((await draftRow(d['id'] as String)).status, 'discarded');
+      expect((await call('GET', '/outbox')).$2, isEmpty);
+    });
+
+    test('approving an event draft in a surat that has since ended is 409 '
+        'channel_closed and discards it', () async {
+      await suratRow(
+        id: 's4',
+        rows: {
+          myId: row('s4', '0000000000001-00000'),
+          xavierId: row('s4', '0000000000002-00000'),
+        },
+      );
+      final (_, d) = await call('POST', '/surat/s4/leave');
+      await (db.update(db.channels)..where((c) => c.id.equals('s4'))).write(
+        const ChannelsCompanion(closedAt: Value(5)),
+      );
+      expect(
+        await call('POST', '/outbox/${d['id']}/approve'),
+        res(409, {'error': 'channel_closed', 'status': 'discarded'}),
+      );
+      expect((await draftRow(d['id'] as String)).status, 'discarded');
+      expect((await call('GET', '/outbox')).$2, isEmpty);
+    });
+
+    test('a surat that ends while a decision is being published is 409 '
+        'channel_closed', () async {
+      await suratRow(
+        id: 's5',
+        rows: {
+          myId: row('s5', '0000000000001-00000', state: 'invited'),
+          xavierId: row('s5', '0000000000002-00000'),
+        },
+      );
+      // The route reads the surat open, then it ends before the accept is
+      // published.
+      final answer = call(
+        'POST',
+        '/pending/${Uri.encodeComponent('invite:s5:$myId')}/approve',
+      );
+      await (db.update(db.channels)..where((c) => c.id.equals('s5'))).write(
+        const ChannelsCompanion(closedAt: Value(5)),
+      );
+      expect(await answer, res(409, {'error': 'channel_closed'}));
+    });
+
     test('pending errors', () async {
       final (yara, _) = await pairedPeer('Yara');
       await suratRow(

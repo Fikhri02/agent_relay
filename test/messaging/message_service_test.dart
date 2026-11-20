@@ -766,7 +766,8 @@ void main() {
       },
     );
 
-    test('approving a draft after I left throws NotAMember and sends nothing', () async {
+    test('approving a draft after I left throws NotAMember, sends nothing '
+        'and discards it', () async {
       await aliceSurat();
       final d = await alice.svc.draft(channelId: 'surat-1', body: 'x');
       await alice.db.customStatement(
@@ -777,7 +778,22 @@ void main() {
       final row = await (alice.db.select(
         alice.db.messages,
       )..where((m) => m.id.equals(d.id))).getSingle();
-      expect(row.status, 'awaiting_approval');
+      expect(row.status, 'discarded');
+    });
+
+    test('approving a message draft in an ended surat throws ChannelClosed '
+        'and discards it', () async {
+      await aliceSurat();
+      final d = await alice.svc.draft(channelId: 'surat-1', body: 'x');
+      await (alice.db.update(alice.db.channels)
+            ..where((c) => c.id.equals('surat-1')))
+          .write(const ChannelsCompanion(closedAt: Value(5)));
+      await expectLater(alice.svc.approve(d.id), throwsA(isA<ChannelClosed>()));
+      expect(await queued(alice, bob), isEmpty);
+      final row = await (alice.db.select(
+        alice.db.messages,
+      )..where((m) => m.id.equals(d.id))).getSingle();
+      expect(row.status, 'discarded');
     });
   });
 }

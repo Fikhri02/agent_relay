@@ -101,6 +101,9 @@ class SuratRoutes {
       return _error(404, 'unknown_pending');
     } on NotAllowed {
       return _error(403, 'not_allowed');
+    } on ChannelClosed {
+      // It ended between reading the pending item and publishing the answer.
+      return _error(409, 'channel_closed');
     }
   }
 

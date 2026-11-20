@@ -511,6 +511,13 @@ def outbox_action(draft_id, action):
     if status == 404:
         raise RelayError("No draft %s in the outbox (already sent, discarded or expired?)."
                          % draft_id)
+    err = payload.get("error") if isinstance(payload, dict) else None
+    if err == "not_a_member":
+        raise RelayError("Not sent: you're no longer a member of that surat, so draft %s "
+                         "was discarded." % draft_id)
+    if err == "channel_closed":
+        raise RelayError("Not sent: that conversation has ended, so draft %s was discarded."
+                         % draft_id)
     return expect_ok(status, payload, "%s %s" % (action.capitalize(), draft_id))
 
 
@@ -604,6 +611,8 @@ def cmd_decide(args):
     status, payload = api("POST", "/pending/%s/%s" % (urllib.parse.quote(args.pending_id, safe=""),
                                                       action))
     err = payload.get("error") if isinstance(payload, dict) else None
+    if err == "channel_closed":
+        raise RelayError("Not allowed: that surat has ended.")
     if status == 409 or err == "already_approved":
         raise RelayError("Already approved — nothing to do.")
     if status == 404 or err == "unknown_pending":

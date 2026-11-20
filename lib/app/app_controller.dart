@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../data/relay_database.dart';
 import '../discovery/discovery_service.dart' show splitAdvertisedName;
+import '../messaging/message_service.dart' show ChannelClosed, NotAMember;
 import '../node/notifier.dart';
 import '../node/relay_node.dart';
 import '../pairing/pairing_service.dart';
@@ -370,8 +371,36 @@ class AppController extends ChangeNotifier {
     );
   }
 
+  /// Approves a draft. Called unawaited from a notification or the Outbox,
+  /// so it never throws: a draft that can no longer go has been discarded,
+  /// and the person is told why.
   Future<void> approve(String id) async {
-    await node.messages.approve(id);
+    try {
+      await node.messages.approve(id);
+    } on NotAMember {
+      await notifier.show(
+        const NotificationText(
+          'Not sent',
+          "You're no longer in that surat, so the draft was discarded.",
+        ),
+      );
+    } on ChannelClosed {
+      await notifier.show(
+        const NotificationText(
+          'Not sent',
+          'That conversation has ended, so the draft was discarded.',
+        ),
+      );
+    } on Object catch (e) {
+      debugPrint('approve $id failed: $e');
+      await notifier.show(
+        const NotificationText(
+          'Not sent',
+          'Something went wrong; the draft is still in the Outbox.',
+        ),
+      );
+    }
+    await refresh();
   }
 
   Future<void> discard(String id) async {
@@ -393,6 +422,18 @@ class AppController extends ChangeNotifier {
       // An approval cannot be taken back.
     } on NotAllowed {
       // The surat ended.
+    } on ChannelClosed {
+      // The surat ended while the answer was being published.
+    } on NotAMember {
+      // I'm no longer in it.
+    } on Object catch (e) {
+      debugPrint('decide $id failed: $e');
+      await notifier.show(
+        const NotificationText(
+          "Couldn't answer",
+          'Something went wrong; try again from the surat.',
+        ),
+      );
     }
     await refresh();
   }

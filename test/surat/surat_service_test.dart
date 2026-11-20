@@ -280,26 +280,29 @@ void main() {
     );
   });
 
-  test('a draft approved after the surat ended is not sent', () async {
-    final suratId = await created([bob]);
-    await bobAccepts(suratId);
-    final rename = await alice.surat.draftRename(suratId, 'Later');
-    await alice.storeIncoming(
-      suratId,
-      from: bob,
-      hlc: Hlc(now, 0).encode(),
-      event: const LeaveEvent(),
-    );
-    await alice.surat.rebuild(suratId);
-    expect((await alice.channel(suratId))!.closedAt, isNotNull);
-    await expectLater(
-      alice.messages.approve(rename),
-      throwsA(isA<ChannelClosed>()),
-    );
-    final row = await alice.message(rename);
-    expect((row.status, row.hlc), ('awaiting_approval', null));
-    expect(await alice.db.select(alice.db.deliveries).get(), hasLength(1));
-  });
+  test(
+    'a draft approved after the surat ended is not sent and is discarded',
+    () async {
+      final suratId = await created([bob]);
+      await bobAccepts(suratId);
+      final rename = await alice.surat.draftRename(suratId, 'Later');
+      await alice.storeIncoming(
+        suratId,
+        from: bob,
+        hlc: Hlc(now, 0).encode(),
+        event: const LeaveEvent(),
+      );
+      await alice.surat.rebuild(suratId);
+      expect((await alice.channel(suratId))!.closedAt, isNotNull);
+      await expectLater(
+        alice.messages.approve(rename),
+        throwsA(isA<ChannelClosed>()),
+      );
+      final row = await alice.message(rename);
+      expect((row.status, row.hlc), ('discarded', null));
+      expect(await alice.db.select(alice.db.deliveries).get(), hasLength(1));
+    },
+  );
 
   test(
     'the newcomer copy of an invite carries the snapshot; other copies do not',
