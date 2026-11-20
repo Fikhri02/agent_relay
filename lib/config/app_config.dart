@@ -35,7 +35,8 @@ class AppConfig {
         : baseKeychainPrefix;
     return AppConfig(
       dataDir: dataDir,
-      peerPort: int.tryParse(env['AGENT_RELAY_PEER_PORT'] ?? '') ?? defaultPeerPort,
+      peerPort:
+          int.tryParse(env['AGENT_RELAY_PEER_PORT'] ?? '') ?? defaultPeerPort,
       localPort:
           int.tryParse(env['AGENT_RELAY_LOCAL_PORT'] ?? '') ?? defaultLocalPort,
       keychainPrefix: prefix,

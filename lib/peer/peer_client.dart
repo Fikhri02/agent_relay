@@ -36,10 +36,19 @@ class PeerClockSkew implements Exception {
   String toString() => 'clocks differ by ${skewMs ~/ 1000} s';
 }
 
+/// What the delivery worker needs from the network (faked in tests).
+abstract class PeerTransport {
+  Future<PeerResponse> post(
+    PeerTarget t,
+    String path,
+    Map<String, dynamic> body,
+  );
+}
+
 /// Signed HTTPS calls to another Mac. With a pinned fingerprint, any other
 /// certificate is refused; without one (pairing only) the presented one is
 /// returned for the comparison code.
-class PeerClient {
+class PeerClient implements PeerTransport {
   PeerClient(
     this.me, {
     required this.relayPort,

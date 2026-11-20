@@ -13,8 +13,19 @@ class TlsCertManager {
     final keyPath = '$outputDir/key.pem';
 
     final result = await Process.run('/usr/bin/openssl', [
-      'req', '-x509', '-newkey', 'rsa:2048', '-keyout', keyPath, '-out',
-      certPath, '-days', '3650', '-nodes', '-subj', '/CN=AgentRelay',
+      'req',
+      '-x509',
+      '-newkey',
+      'rsa:2048',
+      '-keyout',
+      keyPath,
+      '-out',
+      certPath,
+      '-days',
+      '3650',
+      '-nodes',
+      '-subj',
+      '/CN=AgentRelay',
     ]);
     if (result.exitCode != 0) {
       throw Exception('openssl failed: ${result.stderr}');
@@ -37,5 +48,6 @@ class TlsCertManager {
     return fingerprintOfDer(base64.decode(base64Body));
   }
 
-  static String fingerprintOfDer(List<int> der) => sha256.convert(der).toString();
+  static String fingerprintOfDer(List<int> der) =>
+      sha256.convert(der).toString();
 }
