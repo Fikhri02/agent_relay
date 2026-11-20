@@ -154,6 +154,7 @@ class AppController extends ChangeNotifier {
       final mine = m.direction == 'out';
       final base = MessageView.fromRow(
         m,
+        myName: me.personName,
         senderName: mine
             ? 'You'
             : peerRows[m.fromDeviceId]?.personName ?? 'Unknown',
@@ -168,6 +169,8 @@ class AppController extends ChangeNotifier {
         MessageView(
           id: base.id,
           senderName: base.senderName,
+          senderId: base.senderId,
+          initial: base.initial,
           sentAt: base.sentAt,
           body: base.body,
           context: base.context,

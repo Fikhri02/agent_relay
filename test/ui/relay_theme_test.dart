@@ -70,4 +70,40 @@ void main() {
       BorderRadius.circular(16),
     );
   });
+
+  for (final (name, theme) in [
+    ('light', RelayTheme.light()),
+    ('dark', RelayTheme.dark()),
+  ]) {
+    test('$name: person colours read as text and carry the disc initial', () {
+      final c = theme.extension<RelayColors>()!;
+      final bg = theme.colorScheme.surface;
+      expect(c.people, hasLength(greaterThanOrEqualTo(5)));
+      for (final p in [...c.people, c.primaryText]) {
+        expect(_contrast(p, bg), greaterThanOrEqualTo(4.5), reason: '$p on bg');
+        expect(
+          _contrast(p, c.surface),
+          greaterThanOrEqualTo(4.5),
+          reason: '$p on memo',
+        );
+        expect(
+          _contrast(c.surface, p),
+          greaterThanOrEqualTo(4.5),
+          reason: 'initial on $p',
+        );
+      }
+    });
+  }
+
+  test('a person keeps one colour; my own memos use primaryText', () {
+    final c = RelayTheme.light().extension<RelayColors>()!;
+    expect(c.person('abc'), c.person('abc'));
+    expect(c.person('abc', mine: true), c.primaryText);
+    final picks = {for (var i = 0; i < 40; i++) c.person('device-$i')};
+    expect(
+      picks.length,
+      c.people.length,
+      reason: 'ids spread over the palette',
+    );
+  });
 }

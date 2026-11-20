@@ -1,5 +1,6 @@
 import 'package:agent_relay/ui/channels/message_tile.dart';
 import 'package:agent_relay/ui/channels/message_view.dart';
+import 'package:agent_relay/ui/theme/relay_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -225,6 +226,109 @@ void main() {
       );
       expect(find.textContaining('Delivered'), findsNothing);
       expect(find.textContaining('Waiting for'), findsNothing);
+    });
+  });
+
+  group('sender disc', () {
+    testWidgets('shows the initial in the sender colour; mine on the right', (
+      tester,
+    ) async {
+      await pumpUi(
+        tester,
+        Column(
+          children: [
+            MessageTile(
+              message: MessageView(
+                id: 'in1',
+                senderName: 'Xaves',
+                senderId: 'dev-x',
+                sentAt: sentAt,
+                body: 'hello',
+              ),
+            ),
+            MessageTile(
+              message: MessageView(
+                id: 'out1',
+                senderName: 'You',
+                senderId: 'dev-me',
+                initial: 'I',
+                mine: true,
+                sentAt: sentAt,
+                body: 'hi',
+              ),
+            ),
+          ],
+        ),
+      );
+      final ctx = tester.element(find.byType(Column).first);
+      final c = RelayColors.of(ctx);
+      Color fill(String id) =>
+          ((tester.widget<Container>(find.byKey(ValueKey('disc-$id'))))
+                      .decoration!
+                  as BoxDecoration)
+              .color!;
+      expect(find.text('X'), findsOneWidget);
+      expect(find.text('I'), findsOneWidget);
+      expect(fill('in1'), c.person('dev-x'));
+      expect(fill('out1'), c.primaryText);
+      final width = tester.getSize(find.byType(Column).first).width;
+      expect(
+        tester.getTopLeft(find.byKey(const ValueKey('disc-in1'))).dx,
+        lessThan(width / 2),
+      );
+      expect(
+        tester.getTopLeft(find.byKey(const ValueKey('disc-out1'))).dx,
+        greaterThan(width / 2),
+      );
+    });
+
+    testWidgets('follows a long memo while it scrolls, then stops at its end', (
+      tester,
+    ) async {
+      final controller = ScrollController();
+      addTearDown(controller.dispose);
+      await pumpUi(
+        tester,
+        SizedBox(
+          height: 400,
+          child: ListView(
+            controller: controller,
+            children: [
+              MessageTile(
+                message: MessageView(
+                  id: 'long',
+                  senderName: 'Xaves',
+                  senderId: 'dev-x',
+                  sentAt: sentAt,
+                  body: List.filled(
+                    80,
+                    'A line of the refund update.',
+                  ).join('\n'),
+                ),
+              ),
+              const SizedBox(height: 600),
+            ],
+          ),
+        ),
+      );
+      final disc = find.byKey(const ValueKey('disc-long'));
+      final memo = find.byKey(const ValueKey('memo-long'));
+      final viewTop = tester.getTopLeft(find.byType(ListView)).dy;
+      expect(tester.getTopLeft(disc).dy, tester.getTopLeft(memo).dy);
+
+      controller.jumpTo(300);
+      await tester.pump();
+      expect(tester.getTopLeft(memo).dy, lessThan(viewTop));
+      expect(tester.getTopLeft(disc).dy, closeTo(viewTop + 8, 0.5));
+
+      final memoHeight = tester.getSize(memo).height;
+      controller.jumpTo(memoHeight - 10);
+      await tester.pump();
+      expect(
+        tester.getBottomLeft(disc).dy,
+        closeTo(tester.getBottomLeft(memo).dy, 0.5),
+        reason: 'stops at the bottom of its own memo',
+      );
     });
   });
 }

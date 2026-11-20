@@ -21,6 +21,7 @@ class RelayColors extends ThemeExtension<RelayColors> {
     required this.warning,
     required this.danger,
     required this.info,
+    required this.people,
   });
 
   /// Top strip that holds the conversation tabs.
@@ -48,6 +49,23 @@ class RelayColors extends ThemeExtension<RelayColors> {
   final Color danger;
   final Color info;
 
+  /// One colour per teammate on their memos (name and initial disc). A
+  /// person keeps the same colour everywhere: it is picked from their device
+  /// id. My own memos use [primaryText]. Readable as text on the page and on
+  /// a memo, and [surface] is readable on each as the disc's initial.
+  final List<Color> people;
+
+  /// The colour for one sender: [primaryText] for my own memos, otherwise a
+  /// stable pick from [people] for [deviceId].
+  Color person(String deviceId, {bool mine = false}) {
+    if (mine || people.isEmpty) return primaryText;
+    var h = 0x811c9dc5; // FNV-1a, so the pick is the same on every Mac
+    for (final unit in deviceId.codeUnits) {
+      h = ((h ^ unit) * 0x01000193) & 0xFFFFFFFF;
+    }
+    return people[h % people.length];
+  }
+
   static RelayColors of(BuildContext context) =>
       Theme.of(context).extension<RelayColors>()!;
 
@@ -67,6 +85,13 @@ class RelayColors extends ThemeExtension<RelayColors> {
     warning: Color(0xFF975A00),
     danger: Color(0xFFC62A2F),
     info: Color(0xFF0D6AB5),
+    people: [
+      Color(0xFF0E7C70), // teal
+      Color(0xFF975A00), // amber
+      Color(0xFFB0306A), // rose
+      Color(0xFF1D6BAE), // blue
+      Color(0xFF2E7D32), // green
+    ],
   );
 
   static const dark = RelayColors(
@@ -85,6 +110,13 @@ class RelayColors extends ThemeExtension<RelayColors> {
     warning: Color(0xFFF1B544),
     danger: Color(0xFFFF6369),
     info: Color(0xFF70B8FF),
+    people: [
+      Color(0xFF4FD1C1), // teal
+      Color(0xFFF1B544), // amber
+      Color(0xFFFF7EB0), // rose
+      Color(0xFF70B8FF), // blue
+      Color(0xFF7EDC8A), // green
+    ],
   );
 
   @override
@@ -104,6 +136,7 @@ class RelayColors extends ThemeExtension<RelayColors> {
     Color? warning,
     Color? danger,
     Color? info,
+    List<Color>? people,
   }) => RelayColors(
     chrome: chrome ?? this.chrome,
     chromeText: chromeText ?? this.chromeText,
@@ -120,6 +153,7 @@ class RelayColors extends ThemeExtension<RelayColors> {
     warning: warning ?? this.warning,
     danger: danger ?? this.danger,
     info: info ?? this.info,
+    people: people ?? this.people,
   );
 
   @override
@@ -142,6 +176,10 @@ class RelayColors extends ThemeExtension<RelayColors> {
       warning: l(warning, other.warning),
       danger: l(danger, other.danger),
       info: l(info, other.info),
+      people: [
+        for (var i = 0; i < people.length; i++)
+          i < other.people.length ? l(people[i], other.people[i]) : people[i],
+      ],
     );
   }
 }

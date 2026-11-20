@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:flutter/widgets.dart' show StringCharacters;
+
 import '../../data/relay_database.dart';
 
 /// Where the sender was working: shown as the memo's Ref line.
@@ -53,30 +55,52 @@ class MessageView {
     required this.id,
     required this.senderName,
     required this.sentAt,
+    this.senderId = '',
+    String? initial,
     this.body,
     this.context,
     this.arrivedLate = false,
     this.locked = false,
     this.mine = false,
     this.receipts = const [],
-  });
+  }) : _initial = initial; // ignore: prefer_initializing_formals, named params can't be private
+
+  static String _initialOf(String name) {
+    final t = name.trim();
+    return t.isEmpty ? '?' : t.characters.first.toUpperCase();
+  }
 
   /// From a stored row. [senderName] is resolved by the caller ("You" for
   /// outgoing messages, the peer's person name otherwise).
-  factory MessageView.fromRow(Message row, {required String senderName}) =>
-      MessageView(
-        id: row.id,
-        senderName: senderName,
-        sentAt: DateTime.fromMillisecondsSinceEpoch(row.sentAt),
-        body: row.body,
-        context: MessageContext.fromJson(row.contextJson),
-        arrivedLate: row.arrivedLate,
-        locked: row.status == 'locked',
-        mine: row.direction == 'out',
-      );
+  /// [myName] gives my own memos my initial rather than the "Y" of "You".
+  factory MessageView.fromRow(
+    Message row, {
+    required String senderName,
+    String? myName,
+  }) => MessageView(
+    id: row.id,
+    senderName: senderName,
+    senderId: row.fromDeviceId,
+    initial: row.direction == 'out' && myName != null
+        ? _initialOf(myName)
+        : null,
+    sentAt: DateTime.fromMillisecondsSinceEpoch(row.sentAt),
+    body: row.body,
+    context: MessageContext.fromJson(row.contextJson),
+    arrivedLate: row.arrivedLate,
+    locked: row.status == 'locked',
+    mine: row.direction == 'out',
+  );
 
   final String id;
   final String senderName;
+
+  /// The sender's device id: picks their colour. Empty when unknown.
+  final String senderId;
+
+  /// The letter on the sender's disc.
+  String get initial => _initial ?? _initialOf(senderName);
+  final String? _initial;
   final DateTime sentAt;
   final String? body;
   final MessageContext? context;

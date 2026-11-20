@@ -4,12 +4,15 @@ import '../common/relay_widgets.dart';
 import '../theme/relay_format.dart';
 import '../theme/relay_theme.dart';
 import 'message_view.dart';
+import 'sticky_follower.dart';
 
 /// One message as a memo: a surface card with a From / Ref / Time header,
 /// the body as selectable text, an "Arrived late" line and a Copy button.
 ///
-/// My memos are indented 48 from the left, theirs 48 from the right. A
-/// locked message is a dashed box with a lock and no Copy button.
+/// My memos are indented 48 from the left, theirs 48 from the right. Each
+/// memo has its sender's disc beside it — theirs on the left, mine on the
+/// right — in the sender's colour, and the disc follows a long memo while it
+/// scrolls. A locked message is a dashed box with a lock and no Copy button.
 class MessageTile extends StatelessWidget {
   const MessageTile({super.key, required this.message, this.onCopy});
 
@@ -27,7 +30,56 @@ class MessageTile extends StatelessWidget {
       padding: indent,
       child: KeyedSubtree(
         key: ValueKey('memo-${message.id}'),
-        child: message.locked ? _locked(context) : _memo(context),
+        child: _withDisc(
+          context,
+          message.locked ? _locked(context) : _memo(context),
+        ),
+      ),
+    );
+  }
+
+  static const discSize = 28.0;
+  static const _discGap = 8.0;
+
+  Widget _withDisc(BuildContext context, Widget memo) {
+    final c = RelayColors.of(context);
+    final color = c.person(message.senderId, mine: message.mine);
+    final disc = Container(
+      key: ValueKey('disc-${message.id}'),
+      width: discSize,
+      height: discSize,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+      child: Text(
+        message.initial,
+        style: TextStyle(
+          fontSize: 12,
+          height: 1,
+          fontWeight: FontWeight.w600,
+          color: c.surface,
+        ),
+      ),
+    );
+    const room = discSize + _discGap;
+    return Semantics(
+      label: 'From ${message.senderName}',
+      child: Stack(
+        children: [
+          Padding(
+            padding: message.mine
+                ? const EdgeInsets.only(right: room)
+                : const EdgeInsets.only(left: room),
+            child: memo,
+          ),
+          Positioned(
+            top: 0,
+            bottom: 0,
+            width: discSize,
+            left: message.mine ? null : 0,
+            right: message.mine ? 0 : null,
+            child: ExcludeSemantics(child: StickyFollower(child: disc)),
+          ),
+        ],
       ),
     );
   }
@@ -94,7 +146,7 @@ class MessageTile extends StatelessWidget {
                     fontSize: 12,
                     height: 1.4,
                     fontWeight: FontWeight.w600,
-                    color: theme.colorScheme.onSurface,
+                    color: c.person(message.senderId, mine: message.mine),
                   ),
                 ),
               ),
