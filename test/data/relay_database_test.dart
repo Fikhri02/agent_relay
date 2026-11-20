@@ -186,10 +186,9 @@ void main() {
         );
     for (final by in Reader.values) {
       expect(await db.unreadCounts(by: by), {'ch': 1});
-      expect(
-        (await db.channelMessages('ch', unreadBy: by)).map((m) => m.id),
-        ['m'],
-      );
+      expect((await db.channelMessages('ch', unreadBy: by)).map((m) => m.id), [
+        'm',
+      ]);
     }
     expect((await db.channelMessages('ch')).map((m) => m.id), ['m', 'ev']);
   });
@@ -473,4 +472,19 @@ PRAGMA user_version = 1;
     expect(row.inviterDeviceId, isNull);
     expect(row.personName, isNull);
   });
+
+  test(
+    'a rollback does not drop after-commit work another flow queued',
+    () async {
+      final ran = <String>[];
+      Future<void> work() async => ran.add('work');
+      // Two flows overlap: the first commits while the second is still open,
+      // so its work waits for the outermost level; the second then rolls back.
+      final first = db.committing(() async => db.afterCommit(work));
+      final second = db.committing<void>(() async => throw StateError('no'));
+      await first;
+      await expectLater(second, throwsStateError);
+      expect(ran, ['work']);
+    },
+  );
 }

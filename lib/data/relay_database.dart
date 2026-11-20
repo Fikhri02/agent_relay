@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 
 import 'tables.dart';
 
@@ -28,20 +29,27 @@ class RelayDatabase extends _$RelayDatabase {
   final _afterCommit = <Future<void> Function()>{};
 
   /// A transaction whose [afterCommit] work runs once the OUTERMOST one
-  /// started through here has committed (never inside it, never after a
-  /// rollback). Nest freely: only the outermost level flushes.
+  /// started through here has finished (never inside it). Nest freely: only
+  /// the outermost level flushes. The work also runs when that level rolls
+  /// back: it may be another, committed flow's, and each piece re-checks
+  /// what it acts on, so running it after a rollback is safe.
   Future<T> committing<T>(Future<T> Function() body) async {
     _commitDepth++;
     final T out;
     try {
       out = await transaction(body);
     } catch (_) {
-      if (_commitDepth == 1) _afterCommit.clear();
+      if (--_commitDepth == 0) {
+        try {
+          await _runAfterCommit();
+        } on Object catch (e) {
+          // The rollback's own error is the one to report.
+          debugPrint('after-commit work failed after a rollback: $e');
+        }
+      }
       rethrow;
-    } finally {
-      _commitDepth--;
     }
-    if (_commitDepth == 0) await _runAfterCommit();
+    if (--_commitDepth == 0) await _runAfterCommit();
     return out;
   }
 

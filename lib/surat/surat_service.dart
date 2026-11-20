@@ -284,9 +284,11 @@ class SuratService {
                 ))
                 .getSingleOrNull();
         if (row == null ||
+            row.state != 'member' ||
+            row.leftHlc != null ||
             row.myApproval != 'approved' ||
             row.theirApproval != 'approved') {
-          continue; // no longer mutual (a rolled-back publish)
+          continue; // no longer a mutual member (left, or a rolled-back publish)
         }
         final peer = await (db.select(
           db.peers,
