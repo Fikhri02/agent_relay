@@ -110,7 +110,9 @@ class LocalServer {
 
   Future<Response> _channels(Request _) async {
     final peers = await _peerMap();
-    final unread = await db.unreadCounts();
+    // The local API is the agent's view: unread means not read by the agent,
+    // even if the person already opened it in the app.
+    final unread = await db.unreadCounts(by: Reader.agent);
     final out = <Map<String, Object?>>[];
     for (final c in await db.select(db.channels).get()) {
       final members = await (db.select(

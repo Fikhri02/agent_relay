@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart';
 
 import '../data/relay_database.dart';
 import '../discovery/discovery_service.dart' show splitAdvertisedName;
-import '../messaging/message_service.dart';
 import '../node/notifier.dart';
 import '../node/relay_node.dart';
 import '../pairing/pairing_service.dart';
@@ -74,7 +73,7 @@ class AppController extends ChangeNotifier {
 
   Future<void> refresh() async {
     final me = node.identity!.deviceId;
-    final unread = await _db.unreadCounts();
+    final unread = await _db.unreadCounts(by: Reader.person);
     final peerRows = {
       for (final p in await _db.select(_db.peers).get()) p.deviceId: p,
     };

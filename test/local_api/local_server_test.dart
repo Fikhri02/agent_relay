@@ -294,4 +294,41 @@ void main() {
     );
     expect(((await call('GET', '/channels')).$2 as List).single['unread'], 0);
   });
+
+  test('a message the person already saw in the app is still unread for the agent', () async {
+    await db
+        .into(db.messages)
+        .insert(
+          MessagesCompanion.insert(
+            id: 's1',
+            channelId: ch,
+            kind: 'message',
+            fromDeviceId: xavierId,
+            sentAt: now,
+            hlc: const Value('0000000000005-00000'),
+            seq: const Value(1),
+            body: const Value('seen in the app'),
+            direction: 'in',
+            status: 'read',
+            createdAt: now,
+            seenAt: Value(now),
+          ),
+        );
+    expect(((await call('GET', '/channels')).$2 as List).single['unread'], 1);
+    final first =
+        (await call(
+              'GET',
+              '/channels/$ch/messages?status=unread',
+            )).$2['messages']
+            as List;
+    expect(first.single['body'], 'seen in the app');
+    expect(
+      (await call(
+        'GET',
+        '/channels/$ch/messages?status=unread',
+      )).$2['messages'],
+      isEmpty,
+    );
+    expect(((await call('GET', '/channels')).$2 as List).single['unread'], 0);
+  });
 }

@@ -9,6 +9,12 @@ export 'tables.dart';
 
 part 'relay_database.g.dart';
 
+/// Who read a message: the person in the app, or their agent via the API.
+/// Each keeps its own unread state — opening a message in the app does not
+/// mark it read for the agent, and the agent reading it does not clear the
+/// app's badge.
+enum Reader { person, agent }
+
 @DriftDatabase(tables: [Peers, Channels, ChannelMembers, Messages, Deliveries])
 class RelayDatabase extends _$RelayDatabase {
   /// Tests pass `NativeDatabase.memory()`; the app uses [open].
@@ -21,28 +27,36 @@ class RelayDatabase extends _$RelayDatabase {
   @override
   int get schemaVersion => 1;
 
+  /// Incoming, readable, and not yet read by [by]: `seenAt` for the person,
+  /// `agentReadAt` for the agent. Locked messages never count as unread.
+  Expression<bool> _unreadBy(Reader by) =>
+      messages.direction.equals('in') &
+      messages.status.equals('locked').not() &
+      (by == Reader.agent
+          ? messages.agentReadAt.isNull()
+          : messages.seenAt.isNull());
+
   /// The channel timeline, ordered by `hlc` then `fromDeviceId`. Drafts
-  /// (`hlc` null) are excluded.
-  Future<List<Message>> channelMessages(
-    String channelId, {
-    bool unreadOnly = false,
-  }) {
+  /// (`hlc` null) are excluded. With [unreadBy], only messages that reader
+  /// has not read yet.
+  Future<List<Message>> channelMessages(String channelId, {Reader? unreadBy}) {
     final q = select(messages)
       ..where((m) => m.channelId.equals(channelId) & m.hlc.isNotNull())
       ..orderBy([
         (m) => OrderingTerm.asc(m.hlc),
         (m) => OrderingTerm.asc(m.fromDeviceId),
       ]);
-    if (unreadOnly) q.where((m) => m.status.equals('unread'));
+    if (unreadBy != null) q.where((_) => _unreadBy(unreadBy));
     return q.get();
   }
 
-  /// Unread message count per channel id. Channels with none are absent.
-  Future<Map<String, int>> unreadCounts() async {
+  /// Per channel id, messages [by] has not read yet. Channels with none are
+  /// absent.
+  Future<Map<String, int>> unreadCounts({required Reader by}) async {
     final count = messages.id.count();
     final q = selectOnly(messages)
       ..addColumns([messages.channelId, count])
-      ..where(messages.status.equals('unread'))
+      ..where(messages.hlc.isNotNull() & _unreadBy(by))
       ..groupBy([messages.channelId]);
     return {
       for (final row in await q.get())

@@ -18,6 +18,11 @@ this Mac. Add `--json` for raw output.
 | "who's online" | `peers` |
 | "outbox" | `outbox` |
 
+**Unread means unread by the agent.** Opening a message in Agent Relay marks it *seen* by the
+person; reading it through this skill marks it *read by the agent*. The two are tracked apart:
+`inbox` and `read` list incoming messages the agent hasn't read yet, even if the person already
+saw them in the app, and the agent reading them doesn't clear the app's badge.
+
 Pass the body with a quoted heredoc so nothing gets expanded:
 
 ```bash

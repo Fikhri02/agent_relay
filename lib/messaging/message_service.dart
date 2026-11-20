@@ -10,6 +10,8 @@ import '../data/relay_database.dart';
 import '../ordering/hlc.dart';
 import 'envelope.dart';
 
+export '../data/relay_database.dart' show Reader;
+
 const maxBodyBytes = 32768;
 const lateAfterMs = 120000;
 
@@ -45,9 +47,6 @@ const maxFutureSkewMs = 60000;
 const draftLifetimeMs = 60 * 60 * 1000;
 
 typedef ReceiveResult = ({bool duplicate, Message message});
-
-/// Who read a message: the person in the app, or their agent via the API.
-enum Reader { person, agent }
 
 typedef Receipt = ({
   String deviceId,
@@ -290,14 +289,18 @@ class MessageService {
     return (duplicate: !inserted, message: m);
   }
 
-  /// Ordered messages of a channel; marks returned unread ones read and
-  /// queues one receipt per message and reader kind.
+  /// Ordered messages of a channel; marks the returned ones read by [by] and
+  /// queues one receipt per message and reader kind. [unreadOnly] returns only
+  /// what [by] has not read yet — the person and the agent are tracked apart.
   Future<List<Message>> read(
     String channelId, {
     bool unreadOnly = false,
     required Reader by,
   }) async {
-    final list = await db.channelMessages(channelId, unreadOnly: unreadOnly);
+    final list = await db.channelMessages(
+      channelId,
+      unreadBy: unreadOnly ? by : null,
+    );
     final now = _now();
     for (final m in list.where((m) => m.direction == 'in')) {
       final already = by == Reader.agent ? m.agentReadAt : m.seenAt;

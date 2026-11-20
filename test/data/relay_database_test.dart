@@ -18,6 +18,8 @@ void main() {
     String direction = 'in',
     String status = 'unread',
     int createdAt = 1000,
+    int? seenAt,
+    int? agentReadAt,
   }) => MessagesCompanion.insert(
     id: id,
     channelId: channel,
@@ -30,6 +32,8 @@ void main() {
     direction: direction,
     status: status,
     createdAt: createdAt,
+    seenAt: Value(seenAt),
+    agentReadAt: Value(agentReadAt),
   );
 
   Future<void> insert({
@@ -41,6 +45,8 @@ void main() {
     String direction = 'in',
     String status = 'unread',
     int createdAt = 1000,
+    int? seenAt,
+    int? agentReadAt,
   }) => db
       .into(db.messages)
       .insert(
@@ -53,6 +59,8 @@ void main() {
           direction: direction,
           status: status,
           createdAt: createdAt,
+          seenAt: seenAt,
+          agentReadAt: agentReadAt,
         ),
       );
 
@@ -103,23 +111,66 @@ void main() {
       expect((await db.channelMessages('ch')).map((m) => m.id), ['a']);
     });
 
-    test('unreadOnly returns only unread messages', () async {
-      await insert(id: 'a', hlc: '0000000001000-00000', status: 'read');
-      await insert(id: 'b', hlc: '0000000002000-00000', status: 'unread');
-      expect(
-        (await db.channelMessages('ch', unreadOnly: true)).map((m) => m.id),
-        ['b'],
-      );
+    group('unreadBy', () {
+      // a: nobody read it · b: the person saw it in the app · c: the agent
+      // read it · d: both · e: locked · f: our own outgoing message.
+      setUp(() async {
+        await insert(id: 'a', hlc: '0000000001000-00000');
+        await insert(
+          id: 'b',
+          hlc: '0000000002000-00000',
+          status: 'read',
+          seenAt: 5,
+        );
+        await insert(
+          id: 'c',
+          hlc: '0000000003000-00000',
+          status: 'read',
+          agentReadAt: 5,
+        );
+        await insert(
+          id: 'd',
+          hlc: '0000000004000-00000',
+          status: 'read',
+          seenAt: 5,
+          agentReadAt: 6,
+        );
+        await insert(id: 'e', hlc: '0000000005000-00000', status: 'locked');
+        await insert(
+          id: 'f',
+          hlc: '0000000006000-00000',
+          direction: 'out',
+          status: 'sent',
+        );
+      });
+
+      Future<List<String>> ids(Reader by) async =>
+          (await db.channelMessages('ch', unreadBy: by)).map((m) => m.id).toList();
+
+      test('agent: still unread after the person saw it in the app', () async {
+        expect(await ids(Reader.agent), ['a', 'b']);
+      });
+
+      test('person: still unread after the agent read it', () async {
+        expect(await ids(Reader.person), ['a', 'c']);
+      });
+
+      test('null returns the whole timeline', () async {
+        expect((await db.channelMessages('ch')).length, 6);
+      });
     });
   });
 
-  test('unreadCounts counts unread messages per channel', () async {
-    await insert(id: 'a', status: 'unread');
-    await insert(id: 'b', status: 'unread');
-    await insert(id: 'c', status: 'read');
-    await insert(id: 'd', channel: 'ch2', status: 'unread');
-    await insert(id: 'e', channel: 'ch3', status: 'read');
-    expect(await db.unreadCounts(), {'ch': 2, 'ch2': 1});
+  test('unreadCounts counts per reader, per channel', () async {
+    await insert(id: 'a');
+    await insert(id: 'b', status: 'read', seenAt: 5);
+    await insert(id: 'c', status: 'read', seenAt: 5, agentReadAt: 6);
+    await insert(id: 'd', channel: 'ch2', status: 'read', agentReadAt: 5);
+    await insert(id: 'e', channel: 'ch3', status: 'locked');
+    await insert(id: 'f', channel: 'ch4', direction: 'out', status: 'sent');
+    await insert(id: 'g', channel: 'ch5', hlc: null);
+    expect(await db.unreadCounts(by: Reader.agent), {'ch': 2});
+    expect(await db.unreadCounts(by: Reader.person), {'ch': 1, 'ch2': 1});
   });
 
   test('gaps reports missing sequence numbers per incoming sender', () async {

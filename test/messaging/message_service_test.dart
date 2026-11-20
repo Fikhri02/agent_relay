@@ -257,6 +257,24 @@ void main() {
     expect((await bob.db.channelMessages(ch)).single.status, 'read');
   });
 
+  test('the person seeing a message does not mark it read for the agent', () async {
+    await sendAndDeliver(alice, bob, 'x');
+    await bob.svc.read(ch, by: Reader.person);
+    expect(await bob.svc.read(ch, unreadOnly: true, by: Reader.person), isEmpty);
+    final forAgent = await bob.svc.read(ch, unreadOnly: true, by: Reader.agent);
+    expect(forAgent.single.body, 'x');
+    expect(await bob.svc.read(ch, unreadOnly: true, by: Reader.agent), isEmpty);
+  });
+
+  test('the agent reading a message does not clear it for the person', () async {
+    await sendAndDeliver(alice, bob, 'x');
+    await bob.svc.read(ch, by: Reader.agent);
+    expect(await bob.db.unreadCounts(by: Reader.person), {ch: 1});
+    expect(await bob.db.unreadCounts(by: Reader.agent), isEmpty);
+    await bob.svc.read(ch, by: Reader.person);
+    expect(await bob.db.unreadCounts(by: Reader.person), isEmpty);
+  });
+
   group('read receipts', () {
     test('agent read queues one agent_read receipt to the sender; the sender records it', () async {
       final m = await sendAndDeliver(alice, bob, 'x');
