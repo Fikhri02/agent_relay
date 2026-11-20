@@ -152,7 +152,22 @@ def print_message(m):
         print("Locked — this message can't be read on this Mac.")
     else:
         print(m["body"])
+    for r in m.get("receipts") or []:
+        print(receipt_line(r))
     print()
+
+
+def receipt_line(r):
+    """Delivered / seen in the app / read by their agent, for one recipient."""
+    who = r.get("personName", "?")
+    if not r.get("deliveredAt"):
+        return "  %s: not delivered yet" % who
+    parts = ["delivered " + fmt_time(r["deliveredAt"])]
+    if r.get("seenAt"):
+        parts.append("seen " + fmt_time(r["seenAt"]))
+    if r.get("agentReadAt"):
+        parts.append("read by their agent " + fmt_time(r["agentReadAt"]))
+    return "  %s: %s" % (who, SEP.join(parts))
 
 
 def print_messages(name, payload, all_messages):

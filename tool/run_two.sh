@@ -15,4 +15,4 @@ B=$!
 echo "A: pid $A  peer 8790  local 8791  home /tmp/agent-relay-a"
 echo "B: pid $B  peer 8792  local 8793  home /tmp/agent-relay-b"
 echo "Skill against B: AGENT_RELAY_HOME=/tmp/agent-relay-b AGENT_RELAY_LOCAL_PORT=8793 python3 skill/inbox/scripts/relay.py status"
-echo "Stop: kill $A $B"
+echo "Stop: kill $A; kill $B"

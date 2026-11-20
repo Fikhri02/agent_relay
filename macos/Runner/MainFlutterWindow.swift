@@ -1,5 +1,6 @@
 import Cocoa
 import FlutterMacOS
+import ServiceManagement
 
 class MainFlutterWindow: NSWindow {
   override func awakeFromNib() {
@@ -9,7 +10,36 @@ class MainFlutterWindow: NSWindow {
     self.setFrame(windowFrame, display: true)
 
     RegisterGeneratedPlugins(registry: flutterViewController)
+    registerLoginItemChannel(messenger: flutterViewController.engine.binaryMessenger)
 
     super.awakeFromNib()
+  }
+
+  /// "Launch at Login" through SMAppService (macOS 13+).
+  private func registerLoginItemChannel(messenger: FlutterBinaryMessenger) {
+    let channel = FlutterMethodChannel(name: "agentrelay/login_item", binaryMessenger: messenger)
+    channel.setMethodCallHandler { call, result in
+      guard #available(macOS 13.0, *) else {
+        result(FlutterError(code: "unsupported", message: "Needs macOS 13", details: nil))
+        return
+      }
+      switch call.method {
+      case "isEnabled":
+        result(SMAppService.mainApp.status == .enabled)
+      case "setEnabled":
+        do {
+          if call.arguments as? Bool == true {
+            try SMAppService.mainApp.register()
+          } else {
+            try SMAppService.mainApp.unregister()
+          }
+          result(nil)
+        } catch {
+          result(FlutterError(code: "failed", message: error.localizedDescription, details: nil))
+        }
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
   }
 }

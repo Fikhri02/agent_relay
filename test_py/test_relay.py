@@ -255,6 +255,28 @@ class RelayScriptTest(unittest.TestCase):
         self.assertIn("arrived late", r.stdout)
         self.assertIn("m-0", r.stdout)
 
+    def test_read_shows_receipts_on_my_messages(self):
+        self.relay.state["messages"]["ch-x"]["messages"].append(
+            {"id": "m-3", "direction": "out", "from": {"deviceId": "dev-me", "personName": "Irfan"},
+             "sentAt": 1763600120000, "hlc": "h3", "body": "Staging is free now", "context": None,
+             "replyTo": None, "status": "sent", "arrivedLate": False,
+             "receipts": [{"personName": "Xavier", "deliveredAt": 1763600121000,
+                           "seenAt": 1763600180000, "agentReadAt": 1763600240000}]})
+        r = self.run_relay("read", "Xavier", "--all")
+        self.assertEqual(r.returncode, 0, self.output(r))
+        self.assertIn("Xavier: delivered", r.stdout)
+        self.assertIn("seen", r.stdout)
+        self.assertIn("read by their agent", r.stdout)
+
+    def test_read_shows_waiting_when_not_delivered(self):
+        self.relay.state["messages"]["ch-x"]["messages"].append(
+            {"id": "m-4", "direction": "out", "from": {"deviceId": "dev-me", "personName": "Irfan"},
+             "sentAt": 1763600120000, "hlc": "h4", "body": "x", "context": None,
+             "replyTo": None, "status": "queued", "arrivedLate": False,
+             "receipts": [{"personName": "Xavier", "deliveredAt": None, "seenAt": None, "agentReadAt": None}]})
+        r = self.run_relay("read", "Xavier", "--all")
+        self.assertIn("Xavier: not delivered yet", r.stdout)
+
     def test_inbox_plural_gap_banner(self):
         self.relay.state["messages"]["ch-x"]["gaps"] = [{"personName": "Xavier", "missing": 3}]
         r = self.run_relay("inbox")

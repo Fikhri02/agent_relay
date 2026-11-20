@@ -43,3 +43,10 @@ EOF
    Applications." and stop. Exit code 3 means the name matches several Macs: show the list and
    ask which one, then use that channel id.
 6. Show "waiting for N message(s) from {name}", "arrived late" and "Locked" notes as printed.
+
+## Receipts on your own messages
+
+`read` shows, under each message you sent, one line per recipient: `not delivered yet`, or
+`delivered …`, then `seen …` (they opened it in Agent Relay) and `read by their agent …` (their
+agent read it through this skill). Report these as they are when the person asks whether a
+message got through.
