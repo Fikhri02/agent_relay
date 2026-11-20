@@ -7,6 +7,7 @@ import 'package:shelf/shelf.dart';
 
 import '../crypto/request_signer.dart';
 import '../data/relay_database.dart';
+import 'trust.dart';
 
 const _publicPaths = {'/health'};
 const signatureWindowMs = 30000;
@@ -65,7 +66,7 @@ Middleware peerAuthMiddleware({
       db.peers,
     )..where((p) => p.deviceId.equals(deviceId))).getSingleOrNull();
 
-    if (peer != null && peer.trust == 'paired') {
+    if (peer != null && canTalk(peer)) {
       if (!await verifyRequest(peer.signPub, signed, signature)) {
         return _deny('bad_signature');
       }

@@ -4,6 +4,7 @@ import 'package:bonsoir/bonsoir.dart';
 import 'package:drift/drift.dart';
 
 import '../data/relay_database.dart';
+import '../peer/trust.dart';
 
 typedef DiscoveredMac = ({String deviceId, String name, String host, int port});
 
@@ -87,7 +88,7 @@ class DiscoveryService {
     final peer = await (db.select(
       db.peers,
     )..where((p) => p.deviceId.equals(mac.deviceId))).getSingleOrNull();
-    if (peer != null && peer.trust == 'paired') {
+    if (peer != null && canTalk(peer)) {
       await (db.update(
         db.peers,
       )..where((p) => p.deviceId.equals(mac.deviceId))).write(

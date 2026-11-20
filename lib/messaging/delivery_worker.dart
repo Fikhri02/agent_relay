@@ -7,6 +7,7 @@ import '../data/relay_database.dart';
 import '../node/notifier.dart';
 import '../peer/peer_client.dart';
 import 'message_service.dart';
+import '../peer/trust.dart';
 
 const queueLifetimeMs = 7 * 24 * 60 * 60 * 1000;
 const _backoffMs = [5000, 30000, 120000, 300000];
@@ -88,7 +89,7 @@ class DeliveryWorker {
     for (final d in await db.dueDeliveries(_now())) {
       if (await _dropIfTooOld(d, peers[d.recipientDeviceId])) continue;
       final peer = peers[d.recipientDeviceId];
-      if (peer == null || peer.trust != 'paired') continue;
+      if (peer == null || !canTalk(peer)) continue;
       if (unreachable.contains(peer.deviceId)) {
         // Already failed this pass: don't wait out another timeout.
         await _retry(d, 'peer unreachable');
@@ -135,7 +136,7 @@ class DeliveryWorker {
     if (every == null) return;
     final now = _now();
     for (final p in peers) {
-      if (p.trust != 'paired' || p.lastAddress == null || p.lastPort == null) {
+      if (!canTalk(p) || p.lastAddress == null || p.lastPort == null) {
         continue;
       }
       final seen = p.lastSeenAt;

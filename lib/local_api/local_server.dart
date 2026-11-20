@@ -99,7 +99,9 @@ class LocalServer {
       p.lastSeenAt != null && _now() - p.lastSeenAt! <= reachableWithinMs;
 
   Future<Response> _peers(Request _) async {
-    final peers = await db.select(db.peers).get();
+    final peers = await (db.select(
+      db.peers,
+    )..where((p) => p.trust.equals('paired'))).get();
     return _ok([
       for (final p in peers)
         {

@@ -92,6 +92,22 @@ void main() {
     expect(seen, [p.deviceId]);
   });
 
+  test("a surat contact's signed request reaches a paired route", () async {
+    await insertPeer(db, xavier, trust: 'surat_contact');
+    final res = await handler(await signed(xavier));
+    expect(res.statusCode, 200);
+    expect(await res.readAsString(), 'ok:Xavier');
+  });
+
+  test("a surat contact's bad signature is denied", () async {
+    await insertPeer(db, xavier, trust: 'surat_contact');
+    final eve = await IdentityKeys.generate();
+    final res = await handler(
+      await signed(eve, deviceId: deviceIdFor(xavier.signPub, xavier.boxPub)),
+    );
+    expect(res.statusCode, 401);
+  });
+
   test('unknown device is rejected 401 untrusted', () async {
     final res = await handler(await signed(xavier));
     expect(res.statusCode, 401);

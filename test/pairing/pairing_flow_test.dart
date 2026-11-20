@@ -1,5 +1,7 @@
+import 'package:agent_relay/data/relay_database.dart';
 import 'package:agent_relay/pairing/comparison_code.dart';
 import 'package:agent_relay/pairing/pairing_service.dart';
+import 'package:drift/drift.dart' hide isNotNull, isNull;
 import 'package:flutter_test/flutter_test.dart';
 
 import '../support/test_node.dart';
@@ -105,6 +107,72 @@ void main() {
         isNotNull,
       );
     }
+  });
+
+  Future<void> pairAB() async {
+    a.window.open();
+    b.window.open();
+    await b.pairing.connect(a.target);
+    final doneA = a.pairing.events.firstWhere((e) => e is PairingSucceeded);
+    await a.pairing.confirm(b.me.deviceId);
+    await b.pairing.confirm(a.me.deviceId);
+    await doneA.timeout(const Duration(seconds: 5));
+  }
+
+  Future<void> shareSurat(TestNode n) async {
+    await n.db
+        .into(n.db.channels)
+        .insert(
+          ChannelsCompanion.insert(id: 'surat1', kind: 'surat', createdAt: 1),
+        );
+    for (final id in [a.me.deviceId, b.me.deviceId]) {
+      await n.db
+          .into(n.db.channelMembers)
+          .insert(
+            ChannelMembersCompanion.insert(
+              channelId: 'surat1',
+              deviceId: id,
+              joinedHlc: '0000000000000-00000',
+            ),
+          );
+    }
+  }
+
+  test('unpairing keeps a surat link as a contact', () async {
+    await pairAB();
+    await shareSurat(a);
+    final gone = b.pairing.events.firstWhere((e) => e is PeerUnpaired);
+    await a.pairing.unpair(b.me.deviceId);
+    await gone.timeout(const Duration(seconds: 5));
+    expect((await a.db.select(a.db.peers).getSingle()).trust, 'surat_contact');
+    // B shares no surat in its own database, so it is unpaired as before.
+    expect((await b.db.select(b.db.peers).getSingle()).trust, 'unpaired');
+    final private = privateChannelId(a.me.deviceId, b.me.deviceId);
+    final ch = await (a.db.select(
+      a.db.channels,
+    )..where((c) => c.id.equals(private))).getSingle();
+    expect(ch.closedAt, isNotNull);
+  });
+
+  test('a surat contact cannot call /pair/unpair', () async {
+    await pairAB();
+    await (a.db.update(a.db.peers))
+        .write(const PeersCompanion(trust: Value('surat_contact')));
+    await b.pairing.unpair(a.me.deviceId);
+    final res = await b.client.post(
+      (
+        host: '127.0.0.1',
+        port: a.port,
+        pinnedFingerprint: a.me.certFingerprint,
+      ),
+      '/pair/unpair',
+      {},
+    );
+    expect(res.status, 401);
+    expect(res.json['error'], 'untrusted');
+    expect((await a.db.select(a.db.peers).getSingle()).trust, 'surat_contact');
+    final ch = await a.db.select(a.db.channels).getSingle();
+    expect(ch.closedAt, isNull);
   });
 
   test('a second hello while a pairing is pending aborts both', () async {

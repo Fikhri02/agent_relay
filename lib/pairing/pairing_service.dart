@@ -10,6 +10,7 @@ import '../ordering/hlc.dart';
 import '../peer/peer_client.dart';
 import 'comparison_code.dart';
 import 'pairing_window.dart';
+import '../peer/trust.dart';
 
 typedef PendingPair = ({
   String deviceId,
@@ -403,8 +404,12 @@ class PairingService {
   /// Local side of an unpair (ours, or one the other Mac told us about).
   Future<void> markUnpaired(String deviceId) async {
     final nowMs = _now().millisecondsSinceEpoch;
-    await (db.update(db.peers)..where((x) => x.deviceId.equals(deviceId)))
-        .write(const PeersCompanion(trust: Value('unpaired')));
+    final keep = await sharesSurat(db, me.deviceId, deviceId);
+    await (db.update(
+      db.peers,
+    )..where((x) => x.deviceId.equals(deviceId))).write(
+      PeersCompanion(trust: Value(keep ? trustSuratContact : 'unpaired')),
+    );
     await (db.update(db.channels)
           ..where((c) => c.id.equals(privateChannelId(me.deviceId, deviceId))))
         .write(ChannelsCompanion(closedAt: Value(nowMs)));

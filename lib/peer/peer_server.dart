@@ -110,7 +110,9 @@ class PeerServer {
 
   Future<Response> _unpair(Request r) async {
     final peer = r.context[peerContextKey] as Peer?;
-    if (peer == null) return _json(401, {'error': 'untrusted'});
+    if (peer == null || peer.trust != 'paired') {
+      return _json(401, {'error': 'untrusted'});
+    }
     await pairing.markUnpaired(peer.deviceId);
     return _json(200, {'ok': true});
   }

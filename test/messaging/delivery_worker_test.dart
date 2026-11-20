@@ -111,6 +111,16 @@ void main() {
   Future<Message> message(String id) =>
       (db.select(db.messages)..where((m) => m.id.equals(id))).getSingle();
 
+  test('worker delivers to a surat contact', () async {
+    // Queued while paired; recipients for contacts arrive with surat sends.
+    final id = await queuedMessage();
+    await (db.update(db.peers))
+        .write(const PeersCompanion(trust: Value('surat_contact')));
+    await worker.runOnce();
+    expect(net.calls, hasLength(1));
+    expect((await message(id)).status, 'sent');
+  });
+
   test('posts to the peer address pinned to its fingerprint; 200 marks the message sent', () async {
     final id = await queuedMessage();
     await worker.runOnce();
@@ -373,6 +383,15 @@ void main() {
         expect(net.calls.length, 1);
       },
     );
+
+    test('keep-alive pings an idle surat contact', () async {
+      await (db.update(db.peers))
+          .write(const PeersCompanion(trust: Value('surat_contact')));
+      await setLastSeen(now - 61000);
+      await withKeepAlive().runOnce();
+      await pumpEventQueue();
+      expect(net.calls.map((c) => c.$2), ['/relay/ping']);
+    });
 
     test('keep-alive skips a peer heard from recently', () async {
       final w = withKeepAlive();
