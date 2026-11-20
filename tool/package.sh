@@ -18,6 +18,7 @@ cp -R skill/inbox "$STAGE/skill/inbox"
 cp install-skill.sh "$STAGE/"
 cp tool/INSTALL.txt "$STAGE/INSTALL.txt"
 mkdir -p "$OUT"
+OUT="$(cd "$OUT" && pwd)"
 rm -f "$OUT/$NAME.zip"
-(cd "$(dirname "$STAGE")" && ditto -c -k --keepParent "$NAME" "$OLDPWD/$OUT/$NAME.zip")
+ditto -c -k --keepParent "$STAGE" "$OUT/$NAME.zip"
 echo "$OUT/$NAME.zip"
