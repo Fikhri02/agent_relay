@@ -295,40 +295,97 @@ void main() {
     expect(((await call('GET', '/channels')).$2 as List).single['unread'], 0);
   });
 
-  test('a message the person already saw in the app is still unread for the agent', () async {
-    await db
-        .into(db.messages)
-        .insert(
-          MessagesCompanion.insert(
-            id: 's1',
-            channelId: ch,
-            kind: 'message',
-            fromDeviceId: xavierId,
-            sentAt: now,
-            hlc: const Value('0000000000005-00000'),
-            seq: const Value(1),
-            body: const Value('seen in the app'),
-            direction: 'in',
-            status: 'read',
-            createdAt: now,
-            seenAt: Value(now),
-          ),
-        );
-    expect(((await call('GET', '/channels')).$2 as List).single['unread'], 1);
-    final first =
+  test(
+    'a message the person already saw in the app is still unread for the agent',
+    () async {
+      await db
+          .into(db.messages)
+          .insert(
+            MessagesCompanion.insert(
+              id: 's1',
+              channelId: ch,
+              kind: 'message',
+              fromDeviceId: xavierId,
+              sentAt: now,
+              hlc: const Value('0000000000005-00000'),
+              seq: const Value(1),
+              body: const Value('seen in the app'),
+              direction: 'in',
+              status: 'read',
+              createdAt: now,
+              seenAt: Value(now),
+            ),
+          );
+      expect(((await call('GET', '/channels')).$2 as List).single['unread'], 1);
+      final first =
+          (await call(
+                'GET',
+                '/channels/$ch/messages?status=unread',
+              )).$2['messages']
+              as List;
+      expect(first.single['body'], 'seen in the app');
+      expect(
         (await call(
-              'GET',
-              '/channels/$ch/messages?status=unread',
-            )).$2['messages']
-            as List;
-    expect(first.single['body'], 'seen in the app');
-    expect(
-      (await call(
-        'GET',
-        '/channels/$ch/messages?status=unread',
-      )).$2['messages'],
-      isEmpty,
-    );
-    expect(((await call('GET', '/channels')).$2 as List).single['unread'], 0);
+          'GET',
+          '/channels/$ch/messages?status=unread',
+        )).$2['messages'],
+        isEmpty,
+      );
+      expect(((await call('GET', '/channels')).$2 as List).single['unread'], 0);
+    },
+  );
+
+  group('approve with a delivery pass', () {
+    Future<void> useServer(Future<void> Function() deliverNow) async {
+      await server.stop();
+      server = LocalServer(
+        config: AppConfig(
+          dataDir: dir,
+          peerPort: 0,
+          localPort: 0,
+          keychainPrefix: 't',
+        ),
+        db: db,
+        messages: svc,
+        me: (deviceId: myId, personName: 'Irfan', deviceName: 'MacBook Pro'),
+        deliverNow: deliverNow,
+        deliverWait: const Duration(milliseconds: 200),
+        nowMs: () => now,
+      );
+      await server.start();
+      token = await File('${dir.path}/local-token').readAsString();
+    }
+
+    Future<Map> approveOne() async {
+      final (_, b1) = await call(
+        'POST',
+        '/channels/$ch/send',
+        body: {'body': 'hi'},
+      );
+      return (await call('POST', '/outbox/${b1['id']}/approve')).$2 as Map;
+    }
+
+    test('delivered during the pass: sent, nobody queued — even with no recent contact', () async {
+      now += 121000; // last contact is stale, the old check said offline
+      await useServer(() async {
+        for (final d in await db.dueDeliveries(now)) {
+          await svc.markDelivered(d.messageId, d.recipientDeviceId);
+        }
+      });
+      expect(await approveOne(), {'status': 'sent', 'queuedFor': []});
+    });
+
+    test('not delivered by the pass: queued for that person', () async {
+      await useServer(() async {});
+      expect(await approveOne(), {
+        'status': 'queued',
+        'queuedFor': ['Xavier'],
+      });
+    });
+
+    test('a pass slower than the wait still answers, as queued', () async {
+      await useServer(() => Future.delayed(const Duration(seconds: 5)));
+      expect((await approveOne())['status'], 'queued');
+    });
   });
 }

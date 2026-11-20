@@ -8,6 +8,9 @@ import 'message_service.dart';
 
 /// Paired-peer routes for messages and receipts, plugged into [PeerServer].
 Map<String, RouteHandler> relayRoutes(MessageService svc) => {
+  // Keep-alive: the signed request itself marks the caller seen here, and
+  // any answer tells the caller this Mac is up.
+  '/relay/ping': (request, peer) async => _json(200, {'ok': true}),
   '/relay/deliver': (request, peer) async {
     final Envelope env;
     try {

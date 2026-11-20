@@ -134,6 +134,7 @@ class RelayNode {
       messages: messages,
       notifier: notifier,
       onUnpaired: pairing.markUnpaired,
+      keepAlive: const Duration(seconds: 60),
     );
     await _peerServer.start(
       handler: PeerServer(
@@ -154,6 +155,7 @@ class RelayNode {
         personName: me.personName,
         deviceName: me.deviceName,
       ),
+      deliverNow: worker.runOnce,
     );
     await local.start();
     if (_workerTick != null) worker.start(tick: _workerTick);

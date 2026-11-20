@@ -325,4 +325,77 @@ void main() {
     await secondCall;
     expect((await delivery(second)).status, 'delivered');
   });
+
+  group('online status', () {
+    Future<int?> lastSeen() async =>
+        (await db.select(db.peers).getSingle()).lastSeenAt;
+    Future<void> setLastSeen(int? at) =>
+        db.update(db.peers).write(PeersCompanion(lastSeenAt: Value(at)));
+
+    test('a delivery the peer answers marks it seen', () async {
+      await setLastSeen(null);
+      await queuedMessage();
+      await worker.runOnce();
+      expect(await lastSeen(), now);
+    });
+
+    test('an unreachable peer is not marked seen', () async {
+      await setLastSeen(null);
+      net.next = const PeerUnreachable('down');
+      await queuedMessage();
+      await worker.runOnce();
+      expect(await lastSeen(), isNull);
+    });
+
+    DeliveryWorker withKeepAlive() => DeliveryWorker(
+      db: db,
+      transport: net,
+      messages: svc,
+      notifier: notes,
+      nowMs: () => now,
+      onUnpaired: (id) async => unpaired.add(id),
+      keepAlive: const Duration(seconds: 60),
+    );
+
+    test(
+      'keep-alive pings an idle peer once a minute and marks it seen',
+      () async {
+        final w = withKeepAlive();
+        await setLastSeen(now - 61000);
+        await w.runOnce();
+        await pumpEventQueue();
+        expect(net.calls.map((c) => c.$2), ['/relay/ping']);
+        expect(await lastSeen(), now);
+
+        await setLastSeen(now - 61000);
+        await w.runOnce(); // pinged under a minute ago: not again
+        await pumpEventQueue();
+        expect(net.calls.length, 1);
+      },
+    );
+
+    test('keep-alive skips a peer heard from recently', () async {
+      final w = withKeepAlive();
+      await setLastSeen(now - 10000);
+      await w.runOnce();
+      await pumpEventQueue();
+      expect(net.calls, isEmpty);
+    });
+
+    test('a 404 from an older build still counts as seen', () async {
+      final w = withKeepAlive();
+      await setLastSeen(now - 61000);
+      net.next = 404;
+      await w.runOnce();
+      await pumpEventQueue();
+      expect(await lastSeen(), now);
+    });
+
+    test('keep-alive is off by default', () async {
+      await setLastSeen(now - 61000);
+      await worker.runOnce();
+      await pumpEventQueue();
+      expect(net.calls, isEmpty);
+    });
+  });
 }

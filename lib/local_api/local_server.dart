@@ -24,8 +24,17 @@ class LocalServer {
     required this.db,
     required this.messages,
     required this.me,
+    this.deliverNow,
+    this.deliverWait = const Duration(seconds: 5),
     int Function()? nowMs,
   }) : _now = nowMs ?? (() => DateTime.now().millisecondsSinceEpoch);
+
+  /// Runs one delivery pass. Approve calls it so the reply says what
+  /// happened ("sent" or still queued) instead of guessing from last contact.
+  final Future<void> Function()? deliverNow;
+
+  /// How long approve waits for that pass before answering.
+  final Duration deliverWait;
 
   final AppConfig config;
   final RelayDatabase db;
@@ -240,13 +249,28 @@ class LocalServer {
         'status': draft.status,
       });
     }
-    final m = await messages.approve(id);
-    final offline = <String>[];
-    for (final r in await messages.receiptsFor(m.id)) {
-      final p = (await _peerMap())[r.deviceId];
-      if (p != null && !_reachable(p)) offline.add(p.personName);
+    var m = await messages.approve(id);
+    final deliver = deliverNow;
+    if (deliver != null && m.status == 'queued') {
+      try {
+        await deliver().timeout(deliverWait);
+      } on Object {
+        // Still queued; the worker keeps trying in the background.
+      }
+      m = await _find(id) ?? m;
     }
-    return _ok({'status': m.status, 'queuedFor': offline});
+    // After a delivery pass: whoever still hasn't got it. Without one (no
+    // worker attached): whoever hasn't been heard from lately.
+    final peers = await _peerMap();
+    final waiting = <String>[
+      if (m.status == 'queued')
+        for (final r in await messages.receiptsFor(m.id))
+          if (deliver != null
+              ? r.deliveredAt == null
+              : !(peers[r.deviceId] == null || _reachable(peers[r.deviceId]!)))
+            r.personName,
+    ];
+    return _ok({'status': m.status, 'queuedFor': waiting});
   }
 
   Future<Response> _discard(Request _, String id) async {

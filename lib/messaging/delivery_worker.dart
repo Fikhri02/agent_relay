@@ -20,8 +20,14 @@ class DeliveryWorker {
     required this.messages,
     required this.notifier,
     required this.onUnpaired,
+    this.keepAlive,
     int Function()? nowMs,
   }) : _now = nowMs ?? (() => DateTime.now().millisecondsSinceEpoch);
+
+  /// When set, a paired peer not heard from for this long is pinged, so
+  /// "online" stays true for an idle teammate whose Mac is up. Null: off.
+  final Duration? keepAlive;
+  final _lastPing = <String, int>{};
 
   final RelayDatabase db;
   final PeerTransport transport;
@@ -77,6 +83,7 @@ class DeliveryWorker {
     final peers = {
       for (final p in await db.select(db.peers).get()) p.deviceId: p,
     };
+    _keepAlive(peers.values);
     final unreachable = <String>{};
     for (final d in await db.dueDeliveries(_now())) {
       if (await _dropIfTooOld(d, peers[d.recipientDeviceId])) continue;
@@ -122,6 +129,42 @@ class DeliveryWorker {
         .write(const MessagesCompanion(status: Value('expired')));
   }
 
+  /// Pings idle paired peers, without holding up deliveries.
+  void _keepAlive(Iterable<Peer> peers) {
+    final every = keepAlive?.inMilliseconds;
+    if (every == null) return;
+    final now = _now();
+    for (final p in peers) {
+      if (p.trust != 'paired' || p.lastAddress == null || p.lastPort == null) {
+        continue;
+      }
+      final seen = p.lastSeenAt;
+      if (seen != null && now - seen < every) continue;
+      if (now - (_lastPing[p.deviceId] ?? 0) < every) continue;
+      _lastPing[p.deviceId] = now;
+      unawaited(_ping(p));
+    }
+  }
+
+  Future<void> _ping(Peer peer) async {
+    try {
+      await transport.post(
+        (
+          host: peer.lastAddress!,
+          port: peer.lastPort!,
+          pinnedFingerprint: peer.certFingerprint,
+        ),
+        '/relay/ping',
+        const {},
+      );
+      // Any answer over the pinned connection is that Mac — even a 404 from
+      // a build without the ping route.
+      await _peer(peer, PeersCompanion(lastSeenAt: Value(_now())));
+    } on Object {
+      // Not reachable now; "online" lapses on its own.
+    }
+  }
+
   /// One try. False when the peer could not be reached at all.
   Future<bool> _attempt(Delivery d, Peer peer) async {
     if (peer.lastAddress == null || peer.lastPort == null) {
@@ -139,6 +182,8 @@ class DeliveryWorker {
         env['path'] as String,
         (env['payload'] as Map).cast<String, dynamic>(),
       );
+      // It answered over the pinned connection: it is up right now.
+      await _peer(peer, PeersCompanion(lastSeenAt: Value(_now())));
       if (res.status == 200) {
         await messages.markDelivered(d.messageId, d.recipientDeviceId);
         if (peer.clockSkewMs != null) {
