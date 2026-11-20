@@ -323,6 +323,146 @@ void main() {
     );
   });
 
+  group('carried cards never redefine a contact (R14)', () {
+    MemberCard spoofed(MemberCard c) => MemberCard(
+      deviceId: c.deviceId,
+      personName: 'Mallory',
+      deviceName: "Mallory's Mac",
+      signPub: c.signPub,
+      boxPub: c.boxPub,
+      certFingerprint: 'evil',
+      address: '10.6.6.6',
+      port: 6666,
+    );
+
+    test("a member re-inviting a seated contact can't change its fingerprint, address or name", () async {
+      final suratId = await bobIsMember();
+      final inviteId = await alice.surat.draftInvite(suratId, carol.id);
+      await alice.messages.approve(inviteId);
+      await deliver(alice, bob, inviteId);
+      await (bob.db.update(
+        bob.db.peers,
+      )..where((p) => p.deviceId.equals(carol.id))).write(
+        const PeersCompanion(
+          lastAddress: Value('10.0.0.3'),
+          lastPort: Value(8790),
+        ),
+      );
+      final before = (await peerRow(bob, carol.id))!;
+      final forged = spoofed(carol.card);
+      final env = await alice.sealFor(
+        bob,
+        suratId,
+        InviteEvent(
+          newcomer: forged,
+          vouch: await vouch(alice.keys.signing, suratId, forged),
+          snapshot: null,
+        ),
+        id: 're-invite-carol',
+        hlc: stamp(),
+      );
+
+      final r = await bob.surat.receiveEvent(
+        env,
+        from: await bob.peerOf(alice),
+      );
+
+      expect(r.duplicate, isFalse); // a valid, if useless, event
+      expect(await peerRow(bob, carol.id), before);
+      expect(before.certFingerprint, 'fp-Carol');
+      final row = (await bob.member(suratId, carol.id))!;
+      expect((row.state, row.personName), ('invited', 'Carol'));
+    });
+
+    test(
+      "a snapshot card can't redefine the newcomer's existing contact",
+      () async {
+        final suratId = await bobIsMember();
+        // Carol already knows Bob from another surat.
+        await carol.db
+            .into(carol.db.peers)
+            .insert(
+              PeersCompanion.insert(
+                deviceId: bob.id,
+                personName: 'Bob',
+                deviceName: 'Bob Mac',
+                signPub: Uint8List.fromList(bob.keys.signPub),
+                boxPub: Uint8List.fromList(bob.keys.boxPub),
+                certFingerprint: 'fp-Bob',
+                trust: 'surat_contact',
+                lastAddress: const Value('10.0.0.2'),
+                lastPort: const Value(8790),
+                pairedAt: 1,
+              ),
+            );
+        final before = (await peerRow(carol, bob.id))!;
+        final inviteId = await alice.surat.draftInvite(suratId, carol.id);
+        await alice.messages.approve(inviteId);
+        final real =
+            (await alice.queuedFor(carol, inviteId)).event as InviteEvent;
+        final snap = real.snapshot!;
+        final env = await alice.sealFor(
+          carol,
+          suratId,
+          InviteEvent(
+            newcomer: real.newcomer,
+            vouch: real.vouch,
+            snapshot: SuratSnapshot(
+              name: snap.name,
+              creatorDeviceId: snap.creatorDeviceId,
+              members: [
+                for (final c in snap.members)
+                  c.deviceId == bob.id ? spoofed(c) : c,
+              ],
+              invited: snap.invited,
+              approvals: snap.approvals,
+            ),
+          ),
+          id: 'spoofed-snapshot',
+          hlc: stamp(),
+        );
+
+        await carol.surat.receiveEvent(env, from: await carol.peerOf(alice));
+
+        expect(await peerRow(carol, bob.id), before);
+        expect((await carol.member(suratId, bob.id))!.personName, 'Bob');
+      },
+    );
+
+    test(
+      'a card for a device the reducer does not seat adds no contact',
+      () async {
+        // Alice fills every seat; her next invite is rejected by the cap.
+        final others = [for (var i = 0; i < 4; i++) await Side.make('P$i')];
+        for (final o in others) {
+          await alice.pair(o);
+        }
+        final (suratId, createId) = await created([bob, ...others.take(3)]);
+        await deliver(alice, bob, createId);
+        final sixth = others.last.card;
+        final env = await alice.sealFor(
+          bob,
+          suratId,
+          InviteEvent(
+            newcomer: sixth,
+            vouch: await vouch(alice.keys.signing, suratId, sixth),
+            snapshot: null,
+          ),
+          id: 'sixth',
+          hlc: stamp(),
+        );
+
+        await bob.surat.receiveEvent(env, from: await bob.peerOf(alice));
+
+        expect(await bob.member(suratId, sixth.deviceId), isNull);
+        expect(await peerRow(bob, sixth.deviceId), isNull);
+        for (final o in others) {
+          await o.db.close();
+        }
+      },
+    );
+  });
+
   test('accept before invite still lands', () async {
     final suratId = await bobIsMember();
     await bob.pair(carol); // reaches Bob's route before Bob knows of her

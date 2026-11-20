@@ -35,9 +35,11 @@ Future<bool> sharesSurat(
   return (await q.get()).isNotEmpty;
 }
 
-/// Records a vouched member as a `surat_contact` pinned to the card's
-/// fingerprint. A `paired` row is never touched; an existing contact whose
-/// keys or fingerprint changed gets the new values (re-vouch).
+/// Records a carried member card as a `surat_contact` pinned to the card's
+/// fingerprint. Only a device with no row yet takes the card's identity: an
+/// existing row keeps its keys, fingerprint and names (a card is the
+/// sender's word, not the device's), and gains the card's address and port
+/// only where it has none. A `paired` row is never touched.
 Future<void> addOrRefreshContact(
   RelayDatabase db,
   MemberCard card, {
@@ -70,16 +72,13 @@ Future<void> addOrRefreshContact(
     db.peers,
   )..where((p) => p.deviceId.equals(card.deviceId))).write(
     PeersCompanion(
-      personName: Value(card.personName),
-      deviceName: Value(card.deviceName),
-      signPub: Value(Uint8List.fromList(card.signPub)),
-      boxPub: Value(Uint8List.fromList(card.boxPub)),
-      certFingerprint: Value(card.certFingerprint),
       trust: const Value(trustSuratContact),
-      lastAddress: card.address == null
-          ? const Value.absent()
-          : Value(card.address),
-      lastPort: card.port == null ? const Value.absent() : Value(card.port),
+      lastAddress: existing.lastAddress == null && card.address != null
+          ? Value(card.address)
+          : const Value.absent(),
+      lastPort: existing.lastPort == null && card.port != null
+          ? Value(card.port)
+          : const Value.absent(),
     ),
   );
 }

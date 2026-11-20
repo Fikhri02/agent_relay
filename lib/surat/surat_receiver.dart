@@ -132,12 +132,12 @@ class SuratReceiver {
             ),
           );
     }
-    await _addContacts(cards);
     await _store(e, event);
     final projected = await _project(suratId);
     if (projected.state.members[me.deviceId]?.state != MemberState.invited) {
       throw const NotAMember(); // it didn't seat me: not a real invite
     }
+    await _addContacts(cards, projected.state);
     return (duplicate: false, changes: projected.changes);
   }
 
@@ -174,13 +174,13 @@ class SuratReceiver {
       default:
         break;
     }
-    await _addContacts(cards);
     await _store(e, stored);
     final projected = await _project(suratId);
     final now = projected.state.members[from.deviceId]?.state;
     if (!wasSeated && now != MemberState.member && now != MemberState.invited) {
       throw const NotAMember(); // rolls back the row and the projection
     }
+    await _addContacts(cards, projected.state);
     return (duplicate: false, changes: projected.changes);
   }
 
@@ -216,9 +216,15 @@ class SuratReceiver {
     }
   }
 
-  Future<void> _addContacts(List<MemberCard> cards) async {
+  /// Contacts for the carried cards of devices the event leaves seated
+  /// (member or invited) in [state]; never my own card.
+  Future<void> _addContacts(List<MemberCard> cards, SuratState state) async {
     for (final c in cards) {
-      if (c.deviceId == me.deviceId) continue;
+      final seat = state.members[c.deviceId]?.state;
+      if (c.deviceId == me.deviceId ||
+          (seat != MemberState.member && seat != MemberState.invited)) {
+        continue;
+      }
       await addOrRefreshContact(db, c, nowMs: _now());
     }
   }

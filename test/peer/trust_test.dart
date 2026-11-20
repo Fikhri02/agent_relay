@@ -106,13 +106,38 @@ void main() {
     expect(p.pairedAt, 1);
   });
 
-  test('a changed key or fingerprint re-vouches the contact', () async {
+  test("an existing contact's identity is never replaced by a card", () async {
     await addOrRefreshContact(db, cardOf(tommy), nowMs: 1);
-    await addOrRefreshContact(db, cardOf(tommy, fp: 'fp2'), nowMs: 2);
+    final other = await IdentityKeys.generate();
+    final forged = MemberCard(
+      deviceId: tommyId,
+      personName: 'Mallory',
+      deviceName: "Mallory's Mac",
+      signPub: other.signPub,
+      boxPub: other.boxPub,
+      certFingerprint: 'evil',
+      address: '10.6.6.6',
+      port: 6666,
+    );
+    await addOrRefreshContact(db, forged, nowMs: 2);
     final p = await peer();
     expect(p.trust, trustSuratContact);
-    expect(p.certFingerprint, 'fp2');
+    expect(p.signPub, tommy.signPub);
+    expect(p.boxPub, tommy.boxPub);
+    expect(p.certFingerprint, 'fp1');
+    expect((p.personName, p.deviceName), ('Tommy', "Tommy's Mac"));
+    expect((p.lastAddress, p.lastPort), ('10.0.0.7', 8790));
     expect(p.pairedAt, 1);
+  });
+
+  test('a card fills only a missing address and port', () async {
+    await insertPeer(db, tommy, trust: 'unpaired', fingerprint: 'orig');
+    await addOrRefreshContact(db, cardOf(tommy, fp: 'other'), nowMs: 2);
+    final p = await peer();
+    expect(p.trust, trustSuratContact);
+    expect(p.certFingerprint, 'orig');
+    expect(p.personName, 'Xavier');
+    expect((p.lastAddress, p.lastPort), ('10.0.0.7', 8790));
   });
 
   test(
