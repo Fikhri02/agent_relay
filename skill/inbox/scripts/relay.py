@@ -371,9 +371,9 @@ def cmd_send(args):
     print("----- exact text -----")
     print(body)
     print("----------------------")
-    print("Show the person this exact text and context line. Only after they say yes, run: "
-          "relay.py approve %s  (or they can click Send in Agent Relay; "
-          "relay.py discard %s to drop it)." % (draft_id, draft_id))
+    print("Ask the person now, in the session's question dialog, with this exact text and "
+          "context line: Send -> relay.py approve %s · Discard -> relay.py discard %s · "
+          "Edit -> discard, draft again, ask again." % (draft_id, draft_id))
 
 
 def outbox_action(draft_id, action):
