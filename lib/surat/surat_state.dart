@@ -65,12 +65,14 @@ class SuratState {
     required Map<String, MemberEntry> members,
     required Map<String, Map<String, String>> approvals,
     required List<String> rejectedInvites,
+    required Map<String, String> seatedAt,
   }) : members = Map.unmodifiable(members),
        approvals = Map.unmodifiable({
          for (final e in approvals.entries)
            e.key: Map<String, String>.unmodifiable(e.value),
        }),
-       rejectedInvites = List.unmodifiable(rejectedInvites);
+       rejectedInvites = List.unmodifiable(rejectedInvites),
+       seatedAt = Map.unmodifiable(seatedAt);
 
   final String suratId;
   final String name;
@@ -85,6 +87,11 @@ class SuratState {
 
   /// Devices whose invite arrived when every seat was taken, in log order.
   final List<String> rejectedInvites;
+
+  /// Hlc of the event that last seated each device as an invitee (create or
+  /// a valid invite); absent for devices that arrived in a snapshot. Not part
+  /// of equality: it is derived from the same log.
+  final Map<String, String> seatedAt;
 
   bool mutual(String a, String b) =>
       approvals[a]?[b] == 'approved' && approvals[b]?[a] == 'approved';
@@ -114,6 +121,7 @@ class SuratState {
       members: fold.members,
       approvals: fold.approvals,
       rejectedInvites: fold.rejected,
+      seatedAt: fold.seatedAt,
     );
   }
 
@@ -178,6 +186,7 @@ class _Fold {
   final members = <String, MemberEntry>{};
   final approvals = <String, Map<String, String>>{};
   final rejected = <String>[];
+  final seatedAt = <String, String>{};
 
   bool isIn(String id, MemberState s) => members[id]?.state == s;
   bool isPresent(String id) =>
@@ -245,7 +254,7 @@ class _Fold {
         if (!started && from == creatorDeviceId) create(hlc, from, event);
         return;
       case InviteEvent(:final newcomer):
-        invite(from, newcomer.deviceId);
+        invite(hlc, from, newcomer.deviceId);
       case AcceptEvent():
         if (!isIn(from, MemberState.invited)) return;
         for (final id in members.keys) {
@@ -303,13 +312,13 @@ class _Fold {
     renamer = creator;
     members[creator] = MemberEntry(state: MemberState.member, joinedHlc: hlc);
     for (final card in event.invitees) {
-      invite(creator, card.deviceId);
+      invite(hlc, creator, card.deviceId);
     }
   }
 
   /// Seats [newcomer] as invited by [inviter], who approves it implicitly. A
   /// device returning after leaving or declining starts with no approvals.
-  void invite(String inviter, String newcomer) {
+  void invite(String hlc, String inviter, String newcomer) {
     if (!isIn(inviter, MemberState.member) || isPresent(newcomer)) return;
     if (seatsTaken >= suratSeatCap) {
       rejected.add(newcomer);
@@ -324,6 +333,7 @@ class _Fold {
       state: MemberState.invited,
       inviter: inviter,
     );
+    seatedAt[newcomer] = hlc;
     setApproval(inviter, newcomer, 'approved');
   }
 

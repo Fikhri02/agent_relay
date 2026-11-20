@@ -63,17 +63,8 @@ class SuratProjection {
     final peers = {
       for (final p in await db.select(db.peers).get()) p.deviceId: p,
     };
-    final cards = _eventCards(loaded.log);
-    final seatedAt = <String, String>{
-      for (final e in loaded.log)
-        ...switch (e.event) {
-          CreateEvent(:final invitees) => {
-            for (final c in invitees) c.deviceId: e.hlc,
-          },
-          InviteEvent(:final newcomer) => {newcomer.deviceId: e.hlc},
-          _ => const <String, String>{},
-        },
-    };
+    final cards = _seatingCards(loaded.log, state.seatedAt);
+    final seatedAt = state.seatedAt;
     final mine = me.deviceId;
     for (final MapEntry(key: id, value: m) in state.members.entries) {
       final peer = peers[id], card = cards[id];
@@ -251,6 +242,26 @@ class SuratProjection {
       invited: inState(MemberState.invited),
       approvals: approvals,
     );
+  }
+
+  /// Each device's card: the one carried by the event that seated it, else
+  /// the latest card in the log (a snapshot's cards).
+  Map<String, MemberCard> _seatingCards(
+    List<LoggedEvent> log,
+    Map<String, String> seatedAt,
+  ) {
+    final cards = _eventCards(log);
+    for (final e in log) {
+      final carried = switch (e.event) {
+        CreateEvent(:final invitees) => invitees,
+        InviteEvent(:final newcomer) => [newcomer],
+        _ => const <MemberCard>[],
+      };
+      for (final c in carried) {
+        if (seatedAt[c.deviceId] == e.hlc) cards[c.deviceId] = c;
+      }
+    }
+    return cards;
   }
 
   /// Cards carried in the log, later ones winning.
