@@ -34,8 +34,9 @@ class UnknownChannel implements Exception {
   const UnknownChannel();
 }
 
-/// A delivery this Mac won't take from this peer: the channel is closed, or
-/// it is private and the sender is no longer paired. Answered as 401.
+/// A delivery into a private channel from a sender that is no longer paired.
+/// Answered as 401: the sender reads it as "they unpaired". A delivery into
+/// a closed channel is [ChannelClosed] instead (409).
 class UntrustedSender implements Exception {
   const UntrustedSender();
 }
@@ -386,19 +387,23 @@ class MessageService {
     final channel = await (db.select(
       db.channels,
     )..where((c) => c.id.equals(e.channelId))).getSingleOrNull();
-    if (channel != null &&
-        (channel.closedAt != null ||
-            (channel.kind == 'private' && from.trust != 'paired'))) {
+    final rows = await (db.select(
+      db.channelMembers,
+    )..where((m) => m.channelId.equals(e.channelId))).get();
+    // Membership first: a sender never seated here learns nothing about the
+    // channel, not even whether it exists or is closed.
+    if (channel == null || !rows.any((m) => m.deviceId == from.deviceId)) {
+      throw const NotAMember();
+    }
+    if (channel.kind == 'private' && from.trust != 'paired') {
       throw const UntrustedSender();
     }
-    final members =
-        await (db.select(db.channelMembers)..where(
-              (m) => m.channelId.equals(e.channelId) & m.leftHlc.isNull(),
-            ))
-            .get();
+    if (channel.closedAt != null) throw const ChannelClosed();
     final ids = {
-      for (final m in members)
-        if (channel?.kind != 'surat' || m.state == 'member') m.deviceId,
+      for (final m in rows)
+        if (m.leftHlc == null &&
+            (channel.kind != 'surat' || m.state == 'member'))
+          m.deviceId,
     };
     if (!ids.contains(from.deviceId) || !ids.contains(myDeviceId)) {
       throw const NotAMember();

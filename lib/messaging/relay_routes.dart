@@ -26,6 +26,9 @@ Map<String, RouteHandler> relayRoutes(
       return _json(400, {'error': 'bad_envelope'});
     } on UntrustedSender {
       return _json(401, {'error': 'untrusted'});
+    } on ChannelClosed {
+      // Not "untrusted": the sender must not read this as an unpair.
+      return _json(409, {'error': 'channel_closed'});
     } on NotAMember {
       return _json(403, {'error': 'not_a_member'});
     }

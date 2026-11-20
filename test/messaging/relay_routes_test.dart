@@ -109,6 +109,17 @@ void main() {
           .insert(
             ChannelsCompanion.insert(id: 'p2', kind: 'private', createdAt: 1),
           );
+      for (final id in [svc.myDeviceId, contact.deviceId]) {
+        await db
+            .into(db.channelMembers)
+            .insert(
+              ChannelMembersCompanion.insert(
+                channelId: 'p2',
+                deviceId: id,
+                joinedHlc: '0000000000000-00000',
+              ),
+            );
+      }
       final res = await relayRoutes(svc)['/relay/deliver']!(
         post('/relay/deliver', {
           'id': 'm2',
@@ -125,6 +136,76 @@ void main() {
       expect(res.statusCode, 401);
     },
   );
+
+  group('closed channels', () {
+    Future<void> channel(String id, String kind, List<String> members) async {
+      await db
+          .into(db.channels)
+          .insert(
+            ChannelsCompanion.insert(
+              id: id,
+              kind: kind,
+              createdAt: 1,
+              closedAt: const Value(5),
+            ),
+          );
+      for (final m in members) {
+        await db
+            .into(db.channelMembers)
+            .insert(
+              ChannelMembersCompanion.insert(
+                channelId: id,
+                deviceId: m,
+                joinedHlc: '0000000000000-00000',
+                state: const Value('member'),
+              ),
+            );
+      }
+    }
+
+    Future<(int, String)> deliver(String channelId) async {
+      final res = await relayRoutes(svc)['/relay/deliver']!(
+        post('/relay/deliver', {
+          'id': 'm1',
+          'channelId': channelId,
+          'kind': 'message',
+          'from': stranger.deviceId,
+          'sentAt': 1,
+          'hlc': '0000000000001-00000',
+          'seq': 1,
+          'sealed': {'eph': '', 'nonce': '', 'ct': '', 'mac': ''},
+        }),
+        stranger,
+      );
+      return (res.statusCode, await res.readAsString());
+    }
+
+    test('a paired member delivering into an ended surat is 409 '
+        'channel_closed, not 401 untrusted', () async {
+      await channel('s1', 'surat', [svc.myDeviceId, stranger.deviceId]);
+      expect(await deliver('s1'), (
+        409,
+        jsonEncode({'error': 'channel_closed'}),
+      ));
+    });
+
+    test(
+      'a paired member delivering into a closed private channel is 409',
+      () async {
+        await channel('p1', 'private', [svc.myDeviceId, stranger.deviceId]);
+        expect(await deliver('p1'), (
+          409,
+          jsonEncode({'error': 'channel_closed'}),
+        ));
+      },
+    );
+
+    test('a sender never seated in a closed channel is 403 not_a_member, '
+        'learning nothing about it', () async {
+      await channel('s2', 'surat', [svc.myDeviceId]);
+      expect(await deliver('s2'), (403, jsonEncode({'error': 'not_a_member'})));
+    });
+  });
 
   test('malformed deliver body is 400', () async {
     final res = await relayRoutes(svc)['/relay/deliver']!(
