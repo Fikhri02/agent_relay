@@ -587,6 +587,137 @@ void main() {
     },
   );
 
+  test(
+    'nothing else is drafted in a surat before its create is published',
+    () async {
+      final draftId = await alice.surat.draftCreate('Trip', [bob.id]);
+      final suratId = (await alice.message(draftId)).channelId;
+      for (final attempt in [
+        () => alice.surat.draftInvite(suratId, carol.id),
+        () => alice.surat.draftLeave(suratId),
+        () => alice.surat.draftRename(suratId, 'Later'),
+      ]) {
+        await expectLater(attempt(), throwsA(isA<NotAllowed>()));
+      }
+      await expectLater(
+        alice.messages.draft(channelId: suratId, body: 'early'),
+        throwsA(isA<NotAMember>()),
+      );
+      // A message row that somehow predates the create is not sent either.
+      await alice.db
+          .into(alice.db.messages)
+          .insert(
+            MessagesCompanion.insert(
+              id: 'early',
+              channelId: suratId,
+              kind: 'message',
+              fromDeviceId: alice.id,
+              sentAt: now,
+              body: const Value('early'),
+              direction: 'out',
+              status: 'awaiting_approval',
+              createdAt: now,
+            ),
+          );
+      await expectLater(
+        alice.messages.approve('early'),
+        throwsA(isA<NotAMember>()),
+      );
+      expect((await alice.message('early')).hlc, isNull);
+
+      // Once the create is out, the same drafts work.
+      await alice.messages.approve(draftId);
+      expect(await alice.surat.draftLeave(suratId), isNotEmpty);
+      expect(
+        (await alice.messages.draft(channelId: suratId, body: 'now')).status,
+        'awaiting_approval',
+      );
+    },
+  );
+
+  test('a re-invited member replays only from its new snapshot', () async {
+    // Alice's surat with Dan: Carol joins, Bob joins, Carol and Bob approve
+    // each other, Carol leaves, then Bob leaves (Carol never hears of it),
+    // and Alice invites Carol again.
+    final dan = await Side.make('Dan');
+    addTearDown(dan.db.close);
+    await alice.pair(dan);
+    final suratId = await created([carol, dan]);
+    Future<void> fromOther(Side who, SuratEvent event) async {
+      now += 1000;
+      await alice.storeIncoming(
+        suratId,
+        from: who,
+        hlc: Hlc(now, 0).encode(),
+        event: event,
+      );
+      await alice.surat.rebuild(suratId);
+      now += 1000;
+    }
+
+    await fromOther(carol, const AcceptEvent());
+    await fromOther(dan, const AcceptEvent());
+    await alice.messages.approve(
+      await alice.surat.draftInvite(suratId, bob.id),
+    );
+    await fromOther(bob, const AcceptEvent());
+    await fromOther(carol, ApproveEvent(bob.id));
+    await fromOther(carol, const LeaveEvent());
+    // What Carol's Mac holds from her first stay: every event up to her leave.
+    final firstStay = await (alice.db.select(
+      alice.db.messages,
+    )..where((m) => m.kind.equals('event') & m.hlc.isNotNull())).get();
+    await fromOther(bob, const LeaveEvent());
+    final reinvite = await alice.surat.draftInvite(suratId, carol.id);
+    final sent = await alice.messages.approve(reinvite);
+    final copy = (await alice.queuedFor(carol, reinvite)).event as InviteEvent;
+    expect(copy.snapshot!.members.map((c) => c.deviceId).toSet(), {
+      alice.id,
+      dan.id,
+    });
+
+    await carol.db
+        .into(carol.db.channels)
+        .insert(
+          ChannelsCompanion.insert(
+            id: suratId,
+            kind: 'surat',
+            createdAt: now,
+            name: const Value('Trip'),
+            creatorDeviceId: Value(alice.id),
+          ),
+        );
+    for (final m in firstStay) {
+      await carol.db
+          .into(carol.db.messages)
+          .insert(
+            m.copyWith(direction: 'in', status: 'read').toCompanion(false),
+          );
+    }
+    await carol.storeIncoming(
+      suratId,
+      from: alice,
+      hlc: sent.hlc!,
+      event: copy,
+    );
+    await carol.surat.rebuild(suratId);
+
+    Future<Map<String, String>> seated(Side side) async => {
+      for (final m in await side.members(suratId))
+        if (m.state == 'member' || m.state == 'invited') m.deviceId: m.state,
+    };
+    expect(await seated(carol), await seated(alice));
+    expect(await seated(carol), {
+      alice.id: 'member',
+      dan.id: 'member',
+      carol.id: 'invited',
+    });
+    expect((await carol.member(suratId, bob.id))?.state, isNot('member'));
+    final carolRow = (await carol.member(suratId, carol.id))!;
+    expect(carolRow.inviterDeviceId, alice.id);
+    expect(carolRow.joinedHlc, sent.hlc);
+  });
+
   test('rebuild is idempotent: a second run changes nothing', () async {
     final suratId = await created([bob, carol]);
     await bobAccepts(suratId);

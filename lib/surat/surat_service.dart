@@ -99,7 +99,7 @@ class SuratService {
               ChannelMembersCompanion.insert(
                 channelId: suratId,
                 deviceId: me.deviceId,
-                joinedHlc: zeroHlc,
+                joinedHlc: unpublishedHlc,
                 personName: Value(me.personName),
                 deviceName: Value(me.deviceName),
               ),
@@ -285,6 +285,9 @@ class SuratService {
     )..where((m) => m.channelId.equals(suratId))).get();
     final mine = rows.where((m) => m.deviceId == me.deviceId).firstOrNull;
     if (mine?.state != 'member') throw const NotAMember();
+    if (mine!.joinedHlc == unpublishedHlc) {
+      throw const NotAllowed('the surat is not created yet');
+    }
     return rows;
   }
 

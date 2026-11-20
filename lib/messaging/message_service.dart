@@ -96,6 +96,15 @@ class MessageService {
   /// Announces a row written elsewhere (an event draft) on [changes].
   void announce(Message m) => _changes.add(m);
 
+  /// A current member: joined, not left, and (for a message) in a surat
+  /// whose create has been published. An event draft passes before that:
+  /// the create itself is the event that publishes it.
+  static bool _current(ChannelMember? mine, {bool event = false}) =>
+      mine != null &&
+      mine.state == 'member' &&
+      mine.leftHlc == null &&
+      (event || mine.joinedHlc != unpublishedHlc);
+
   Future<Message> _get(String id) =>
       (db.select(db.messages)..where((m) => m.id.equals(id))).getSingle();
 
@@ -118,9 +127,7 @@ class MessageService {
                   m.channelId.equals(channelId) & m.deviceId.equals(myDeviceId),
             ))
             .getSingleOrNull();
-    if (mine == null || mine.state != 'member' || mine.leftHlc != null) {
-      throw const NotAMember();
-    }
+    if (!_current(mine)) throw const NotAMember();
     final now = _now();
     final id = const Uuid().v4();
     await db
@@ -158,7 +165,7 @@ class MessageService {
                     x.deviceId.equals(myDeviceId),
               ))
               .getSingleOrNull();
-      if (mine == null || mine.state != 'member' || mine.leftHlc != null) {
+      if (!_current(mine, event: m.kind == 'event')) {
         throw const NotAMember();
       }
       final now = _now();

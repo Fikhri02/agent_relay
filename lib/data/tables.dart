@@ -36,6 +36,10 @@ class Channels extends Table {
   Set<Column> get primaryKey => {id};
 }
 
+/// My [ChannelMembers.joinedHlc] in a surat whose create is still a draft.
+/// Until the create is published nothing else may be drafted there.
+const unpublishedHlc = 'unpublished';
+
 class ChannelMembers extends Table {
   TextColumn get channelId => text()();
   TextColumn get deviceId => text()();

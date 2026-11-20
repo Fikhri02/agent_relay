@@ -11,13 +11,12 @@ import 'surat_change.dart';
 import 'surat_event.dart';
 import 'surat_state.dart';
 
-/// The joinedHlc a row holds before it has a real one (the column is NOT
-/// NULL): my row between drafting and publishing a create.
+/// The joinedHlc of a projected row the log gives no stamp at all.
 const zeroHlc = '0000000000000-00000';
 
-/// A surat's stored event log, sorted, and the state it replays to.
-/// [snapshotHlc] is the hlc of the invite whose snapshot the replay started
-/// from, when there was one.
+/// A surat's replayed event log, sorted, and the state it replays to. On the
+/// snapshot path [log] starts at the invite that carried the snapshot, and
+/// [snapshotHlc] is that invite's hlc.
 typedef SuratLog = ({
   Channel channel,
   List<LoggedEvent> log,
@@ -189,23 +188,27 @@ class SuratProjection {
           final byHlc = a.hlc.compareTo(b.hlc);
           return byHlc != 0 ? byHlc : a.from.compareTo(b.from);
         });
-    ({String hlc, SuratSnapshot snapshot})? start;
-    for (final e in log) {
-      if (e.event case InviteEvent(:final newcomer, :final snapshot?)
+    ({int at, SuratSnapshot snapshot})? start;
+    for (var i = 0; i < log.length; i++) {
+      if (log[i].event case InviteEvent(:final newcomer, :final snapshot?)
           when newcomer.deviceId == me.deviceId) {
-        start = (hlc: e.hlc, snapshot: snapshot);
+        start = (at: i, snapshot: snapshot);
       }
     }
+    // The snapshot already holds everything before its invite; replaying an
+    // older log of mine (from before I left) over it would re-seat devices
+    // that have gone since.
+    final replayed = start == null ? log : log.sublist(start.at);
     return (
       channel: channel,
-      log: log,
+      log: replayed,
       state: SuratState.replay(
         suratId: suratId,
         snapshot: start?.snapshot,
         creatorDeviceId: channel.creatorDeviceId,
-        events: log,
+        events: replayed,
       ),
-      snapshotHlc: start?.hlc,
+      snapshotHlc: start == null ? null : log[start.at].hlc,
     );
   }
 
