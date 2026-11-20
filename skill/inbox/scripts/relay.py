@@ -139,8 +139,18 @@ def gap_banner(gap):
     return "waiting for %d message%s from %s" % (n, "" if n == 1 else "s", gap.get("personName"))
 
 
+LOCKED_REASONS = {
+    "they_have_not_approved_you": "{name} hasn't approved you",
+    "you_have_not_approved_them": "{name} hasn't been approved by you",
+}
+
+
 def print_message(m):
     sender = (m.get("from") or {}).get("personName", "?")
+    if m.get("kind") == "event":
+        print("· %s" % m.get("body"))
+        print()
+        return
     head = "[%s] %s%s%s" % (m.get("id"), sender, SEP, fmt_time(m.get("sentAt")))
     if m.get("arrivedLate"):
         head += SEP + "arrived late"
@@ -150,7 +160,10 @@ def print_message(m):
         print("context: " + ctx)
     if m.get("replyTo"):
         print("reply to: " + str(m["replyTo"]))
-    if m.get("status") == "locked" or m.get("body") is None:
+    reason = LOCKED_REASONS.get(m.get("lockedReason"))
+    if reason and (m.get("status") == "locked" or m.get("body") is None):
+        print("[locked — %s]" % reason.format(name=sender))
+    elif m.get("status") == "locked" or m.get("body") is None:
         print("Locked — this message can't be read on this Mac.")
     else:
         print(m["body"])
@@ -188,10 +201,18 @@ def channel_name(ch):
     return ch.get("name") or peer.get("personName") or ch.get("id")
 
 
+def channel_label(ch):
+    return "surat" if ch.get("kind") == "surat" else "private channel"
+
+
 def print_draft(d, names):
     to = names.get(d.get("channelId"), d.get("channelId") or "?")
     when = d.get("createdAt") or d.get("sentAt")
     print("[%s] to %s%s%s%sawaiting approval" % (d.get("id"), to, SEP, fmt_time(when), SEP))
+    if d.get("kind") == "event":
+        print(d.get("body") or "")
+        print()
+        return
     ctx = context_line(d.get("context"))
     if ctx:
         print("context: " + ctx)
@@ -207,28 +228,71 @@ def emit_json(payload):
 
 # --- name resolution and git context -------------------------------------------
 
-def resolve(target, channels):
-    """Return the channel for a channel id or a person's name (case-insensitive)."""
+def resolve(target, channels, surat_only=False):
+    """Return the channel for a channel id, a person's name or a surat name (case-insensitive).
+
+    "surat {name}" means the surat only. Several matches exit 3 with the ids listed."""
     for ch in channels:
-        if ch.get("id") == target:
+        if ch.get("id") == target and (not surat_only or ch.get("kind") == "surat"):
             return ch
     want = target.casefold()
-    matches = [ch for ch in channels if ch.get("kind", "private") == "private"
-               and str((ch.get("peer") or {}).get("personName") or ch.get("name") or "")
-               .casefold() == want]
+    if want.startswith("surat "):
+        want = want[len("surat "):].strip()
+        surat_only = True
+    surats = [ch for ch in channels if ch.get("kind") == "surat"
+              and str(ch.get("name") or "").casefold() == want]
+    privates = [] if surat_only else [
+        ch for ch in channels if ch.get("kind", "private") == "private"
+        and str((ch.get("peer") or {}).get("personName") or ch.get("name") or "")
+        .casefold() == want]
+    matches = privates + surats
     if len(matches) > 1:
         open_ones = [ch for ch in matches if not ch.get("closed")]
         if len(open_ones) == 1:
             return open_ones[0]
-        lines = ["%s (%s) → %s" % ((ch.get("peer") or {}).get("personName", channel_name(ch)),
-                                         (ch.get("peer") or {}).get("deviceName", "?"), ch["id"])
-                 for ch in matches]
-        raise RelayError("%s has several Macs. Pick one by channel id:\n  %s"
-                         % (target, "\n  ".join(lines)), 3)
+        lines = []
+        for ch in matches:
+            if ch.get("kind") == "surat":
+                lines.append("%s (surat) → %s" % (channel_name(ch), ch["id"]))
+            else:
+                lines.append("%s (%s) → %s" % ((ch.get("peer") or {}).get("personName",
+                                                                          channel_name(ch)),
+                                                (ch.get("peer") or {}).get("deviceName", "?"),
+                                                ch["id"]))
+        what = "several surat" if all(ch.get("kind") == "surat" for ch in matches) \
+            else "several Macs"
+        raise RelayError("%s has %s. Pick one by channel id:\n  %s"
+                         % (target, what, "\n  ".join(lines)), 3)
     if not matches:
-        known = sorted({channel_name(ch) for ch in channels})
-        raise RelayError("No private channel with %s. Channels: %s."
-                         % (target, ", ".join(known) if known else "none — pair in the app first"))
+        pool = [ch for ch in channels if ch.get("kind") == "surat"] if surat_only else channels
+        known = sorted({channel_name(ch) for ch in pool})
+        has_surat = any(ch.get("kind") == "surat" for ch in channels)
+        noun = "surat" if surat_only else "private channel or surat" if has_surat \
+            else "private channel"
+        raise RelayError("No %s with %s. %s: %s."
+                         % (noun, target, "Surat" if surat_only else "Channels",
+                            ", ".join(known) if known else
+                            "none" if surat_only else "none — pair in the app first"))
+    return matches[0]
+
+
+def resolve_person(name, peers):
+    """Return the paired peer for a person's name (case-insensitive) or a device id."""
+    paired = [p for p in peers if p.get("trust", "paired") == "paired"]
+    for p in paired:
+        if p.get("deviceId") == name:
+            return p
+    want = name.casefold()
+    matches = [p for p in paired if str(p.get("personName") or "").casefold() == want]
+    if len(matches) > 1:
+        lines = ["%s (%s) → %s" % (p.get("personName"), p.get("deviceName", "?"),
+                                   p.get("deviceId")) for p in matches]
+        raise RelayError("%s has several Macs. Pick one by device id:\n  %s"
+                         % (name, "\n  ".join(lines)), 3)
+    if not matches:
+        known = sorted({str(p.get("personName")) for p in paired})
+        raise RelayError("No paired person %s. Paired: %s."
+                         % (name, ", ".join(known) if known else "none — pair in the app first"))
     return matches[0]
 
 
@@ -253,6 +317,61 @@ def git_context(cwd=None):
     here = os.path.realpath(cwd or os.getcwd())
     ctx["path"] = os.path.relpath(here, os.path.realpath(top))
     return ctx
+
+
+SURAT_ERRORS = {
+    "empty_name": "A surat needs a name.",
+    "no_invitees": "Pick at least one person to invite.",
+    "too_many_members": "A surat holds at most 5 devices.",
+    "unknown_peer": "That person isn't paired with this Mac.",
+    "not_allowed": "Not allowed: the surat has ended, isn't published yet, or you aren't "
+                   "the one who can do that.",
+    "channel_closed": "The surat {name} has ended.",
+    "not_a_member": "You aren't a member of {name}.",
+    "unknown_channel": "No such surat.",
+}
+
+
+def ask_line(draft_id, what):
+    return ("Ask the person now, in the session's question dialog, with %s: "
+            "Send -> relay.py approve %s · Discard -> relay.py discard %s · "
+            "Edit -> discard, draft again, ask again." % (what, draft_id, draft_id))
+
+
+def fetch_pending():
+    status, payload = api("GET", "/pending")
+    return payload if 200 <= status < 300 and isinstance(payload, list) else []
+
+
+def print_pending(pending):
+    print("== Waiting for your decision (%d) ==" % len(pending))
+    for p in pending:
+        who = "%s (%s)" % (p.get("personName"), p.get("deviceName"))
+        by = p.get("inviterName")
+        if p.get("kind") == "invite":
+            line = "[%s] %s invited you to surat %s — Accept / Decline" % (
+                p.get("id"), by or "Someone", p.get("suratName"))
+        else:
+            line = "[%s] %s wants to join surat %s%s — Approve / Decline" % (
+                p.get("id"), who, p.get("suratName"), (", invited by " + by) if by else "")
+        if p.get("declined"):
+            line += " (you declined)"
+        print(line)
+    print()
+
+
+def draft_surat(path, body, summary, args):
+    """POST a surat drafting route and print the draft with the ask line."""
+    status, payload = api("POST", path, body)
+    err = payload.get("error") if isinstance(payload, dict) else None
+    if err in SURAT_ERRORS:
+        raise RelayError(SURAT_ERRORS[err].format(name=summary))
+    payload = expect_ok(status, payload, "Drafting")
+    if args.json:
+        return emit_json(payload)
+    draft_id = payload.get("id")
+    print("Draft %s: %s — awaiting approval." % (draft_id, summary))
+    print(ask_line(draft_id, "this action"))
 
 
 # --- commands -----------------------------------------------------------------
@@ -295,6 +414,12 @@ def cmd_channels(args):
     for ch in channels:
         kind = "private channel" if ch.get("kind", "private") == "private" else ch.get("kind")
         line = "%s — %s, %d unread" % (channel_name(ch), kind, ch.get("unread") or 0)
+        if ch.get("kind") == "surat":
+            n = len(ch.get("members") or [])
+            if n:
+                line += ", %d other member%s" % (n, "" if n == 1 else "s")
+            if ch.get("pending"):
+                line += ", %d waiting for a decision" % ch["pending"]
         if ch.get("closed"):
             line += ", closed"
         print(line + " → " + str(ch.get("id")))
@@ -311,7 +436,7 @@ def cmd_read(args):
     payload = fetch_messages(ch, args.all)
     if args.json:
         return emit_json(payload)
-    print("== %s (private channel) ==" % channel_name(ch))
+    print("== %s (%s) ==" % (channel_name(ch), channel_label(ch)))
     print_messages(channel_name(ch), payload, args.all)
 
 
@@ -322,14 +447,18 @@ def cmd_inbox(args):
         if (ch.get("unread") or 0) > 0:
             result.append({"channel": ch, **fetch_messages(ch, False)})
     outbox = get("/outbox", "outbox") or []
+    pending = fetch_pending()
     if args.json:
-        return emit_json({"channels": result, "outbox": outbox})
+        return emit_json({"channels": result, "pending": pending, "outbox": outbox})
     if not result:
         print("No unread messages.")
     for entry in result:
         ch = entry["channel"]
-        print("== %s (private channel) — %d unread ==" % (channel_name(ch), len(entry["messages"])))
+        print("== %s (%s) — %d unread ==" % (channel_name(ch), channel_label(ch),
+                                             len(entry["messages"])))
         print_messages(channel_name(ch), entry, False)
+    if pending:
+        print_pending(pending)
     if outbox:
         names = {c.get("id"): channel_name(c) for c in channels}
         print("== Your drafts awaiting approval (%d) ==" % len(outbox))
@@ -357,6 +486,9 @@ def cmd_send(args):
         raise RelayError("Message is too long: %d bytes (UTF-8), the limit is %d bytes. "
                          "Shorten it or split it into several messages."
                          % (len(body.encode("utf-8")), limit))
+    if ch.get("kind") == "surat" and (status in (403, 404, 409) or err):
+        if err in SURAT_ERRORS:
+            raise RelayError(SURAT_ERRORS[err].format(name=name))
     if status == 409 or err == "channel_closed":
         raise RelayError("The private channel with %s is closed (they unpaired). "
                          "Pair again in the Agent Relay app." % name)
@@ -371,9 +503,7 @@ def cmd_send(args):
     print("----- exact text -----")
     print(body)
     print("----------------------")
-    print("Ask the person now, in the session's question dialog, with this exact text and "
-          "context line: Send -> relay.py approve %s · Discard -> relay.py discard %s · "
-          "Edit -> discard, draft again, ask again." % (draft_id, draft_id))
+    print(ask_line(draft_id, "this exact text and context line"))
 
 
 def outbox_action(draft_id, action):
@@ -426,6 +556,67 @@ def cmd_outbox(args):
         print_draft(d, names)
 
 
+def cmd_surat_new(args):
+    peers = get("/peers", "peers") or []
+    people = [resolve_person(n, peers) for n in args.people]
+    ids = [p["deviceId"] for p in people]
+    who = ", ".join("%s (%s)" % (p.get("personName"), p.get("deviceName")) for p in people)
+    draft_surat("/surat", {"name": args.name, "invite": ids},
+                "new surat %s with %s" % (args.name, who), args)
+
+
+def surat_path(ch, action):
+    return "/surat/%s/%s" % (urllib.parse.quote(str(ch["id"]), safe=""), action)
+
+
+def cmd_invite(args):
+    channels = get("/channels", "channels")
+    ch = resolve(args.surat, channels, surat_only=True)
+    person = resolve_person(args.person, get("/peers", "peers") or [])
+    draft_surat(surat_path(ch, "invite"), {"deviceId": person["deviceId"]},
+                "invite %s (%s) to %s" % (person.get("personName"), person.get("deviceName"),
+                                          channel_name(ch)), args)
+
+
+def cmd_leave(args):
+    ch = resolve(args.surat, get("/channels", "channels"), surat_only=True)
+    draft_surat(surat_path(ch, "leave"), None, "leave %s" % channel_name(ch), args)
+
+
+def cmd_rename(args):
+    ch = resolve(args.surat, get("/channels", "channels"), surat_only=True)
+    draft_surat(surat_path(ch, "rename"), {"name": args.new_name},
+                "rename %s to %s" % (channel_name(ch), args.new_name), args)
+
+
+def cmd_pending(args):
+    pending = fetch_pending()
+    if args.json:
+        return emit_json(pending)
+    if not pending:
+        print("Nothing waiting for your decision.")
+        return
+    print_pending(pending)
+
+
+def cmd_decide(args):
+    action = args.decision
+    status, payload = api("POST", "/pending/%s/%s" % (urllib.parse.quote(args.pending_id, safe=""),
+                                                      action))
+    err = payload.get("error") if isinstance(payload, dict) else None
+    if status == 409 or err == "already_approved":
+        raise RelayError("Already approved — nothing to do.")
+    if status == 404 or err == "unknown_pending":
+        raise RelayError("No pending item %s (already decided, or the surat changed)."
+                         % args.pending_id)
+    if status == 403 or err == "not_allowed":
+        raise RelayError("Not allowed: that surat has ended.")
+    payload = expect_ok(status, payload, "Deciding " + args.pending_id)
+    if args.json:
+        return emit_json(payload)
+    print("Approved." if action == "approve" else "Declined.")
+
+
 # --- CLI ----------------------------------------------------------------------
 
 def build_parser():
@@ -471,6 +662,37 @@ def build_parser():
 
     sub.add_parser("outbox", parents=[common], help="drafts awaiting approval").set_defaults(
         func=cmd_outbox)
+
+    n = sub.add_parser("surat-new", parents=[common],
+                       help="draft a new surat (group channel of up to 5 devices)")
+    n.add_argument("name", help="the surat's name")
+    n.add_argument("--with", dest="people", nargs="+", required=True, metavar="PERSON",
+                   help="paired people to invite")
+    n.set_defaults(func=cmd_surat_new)
+
+    i = sub.add_parser("invite", parents=[common], help="draft an invite into a surat")
+    i.add_argument("person")
+    i.add_argument("--to", dest="surat", required=True, metavar="SURAT")
+    i.set_defaults(func=cmd_invite)
+
+    lv = sub.add_parser("leave", parents=[common], help="draft leaving a surat")
+    lv.add_argument("surat")
+    lv.set_defaults(func=cmd_leave)
+
+    rn = sub.add_parser("rename", parents=[common], help="draft renaming a surat")
+    rn.add_argument("surat")
+    rn.add_argument("new_name")
+    rn.set_defaults(func=cmd_rename)
+
+    sub.add_parser("pending", parents=[common],
+                   help="invites and newcomers waiting for your decision").set_defaults(
+        func=cmd_pending)
+
+    dc = sub.add_parser("decide", parents=[common],
+                        help="record the person's own answer on a pending item")
+    dc.add_argument("pending_id")
+    dc.add_argument("decision", choices=["approve", "decline"])
+    dc.set_defaults(func=cmd_decide)
     return p
 
 

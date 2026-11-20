@@ -60,7 +60,14 @@ DEFAULT_STATE = {
     "send": {"code": 201, "json": {"id": "d-42", "status": "awaiting_approval"}},
     "approve": {"code": 200, "json": {"status": "queued", "queuedFor": ["Tommy"]}},
     "discard": {"code": 200, "json": {"status": "discarded"}},
+    "pending": [],
+    "surat_post": {"code": 201, "json": {"id": "d-s1", "suratId": "s-1",
+                                         "status": "awaiting_approval"}},
+    "decide": {"code": 200, "json": {"ok": True}},
 }
+
+SURAT_CHANNEL = {"id": "s-1", "kind": "surat", "name": "Build crew", "unread": 0,
+                 "closed": False, "members": [], "renamer": "dev-me", "pending": 0}
 
 
 class FakeRelay:
@@ -102,6 +109,16 @@ class FakeRelay:
                     return self._reply(200, s["channels"])
                 if method == "GET" and parts == ["outbox"]:
                     return self._reply(200, s["outbox"])
+                if method == "GET" and parts == ["pending"]:
+                    return self._reply(200, s["pending"])
+                if method == "POST" and parts == ["surat"]:
+                    return self._reply(s["surat_post"]["code"], s["surat_post"]["json"])
+                if method == "POST" and len(parts) == 3 and parts[0] == "surat" \
+                        and parts[2] in ("invite", "leave", "rename"):
+                    return self._reply(s["surat_post"]["code"], s["surat_post"]["json"])
+                if method == "POST" and len(parts) == 3 and parts[0] == "pending" \
+                        and parts[2] in ("approve", "decline"):
+                    return self._reply(s["decide"]["code"], s["decide"]["json"])
                 if len(parts) == 3 and parts[0] == "channels":
                     if parts[1] not in s["messages"]:
                         return self._reply(404, {"error": "unknown_channel"})
@@ -466,6 +483,145 @@ class RelayScriptTest(unittest.TestCase):
         r = self.run_relay("inbox")
         self.assertEqual(r.returncode, 2, self.output(r))
         self.assertIn("Agent Relay isn't running", r.stderr)
+
+    # --- surat ----------------------------------------------------------------
+
+    def add_surat(self, **over):
+        ch = dict(SURAT_CHANNEL, **over)
+        self.relay.state["channels"].append(ch)
+        self.relay.state["messages"][ch["id"]] = {"messages": [], "gaps": []}
+        return ch
+
+    def test_send_to_surat_by_name(self):
+        self.add_surat()
+        r = self.run_relay("send", "surat build CREW", "--context", "none", stdin="Hello crew")
+        self.assertEqual(r.returncode, 0, self.output(r))
+        self.assertEqual(self.relay.last_post()["path"], "/channels/s-1/send")
+        self.assertIn("Build crew", r.stdout)
+        self.assertIn("Ask the person now, in the session's question dialog", r.stdout)
+        r = self.run_relay("send", "Build crew", "--context", "none", stdin="Hi")
+        self.assertEqual(r.returncode, 0, self.output(r))
+        self.assertEqual(self.relay.last_post()["path"], "/channels/s-1/send")
+
+    def test_surat_new_resolves_people(self):
+        r = self.run_relay("surat-new", "Build crew", "--with", "xavier", "Tommy")
+        self.assertEqual(r.returncode, 0, self.output(r))
+        post = self.relay.last_post()
+        self.assertEqual(post["path"], "/surat")
+        self.assertEqual(post["body"], {"name": "Build crew", "invite": ["dev-x", "dev-t"]})
+        self.assertIn("d-s1", r.stdout)
+        self.assertIn("Ask the person now, in the session's question dialog", r.stdout)
+
+    def test_surat_new_ambiguous_person_exits_3(self):
+        self.relay.state["peers"].append(
+            {"deviceId": "dev-x2", "personName": "Xavier", "deviceName": "Xavier iMac",
+             "trust": "paired", "reachable": True, "clockSkewMs": None})
+        r = self.run_relay("surat-new", "Crew", "--with", "Xavier")
+        self.assertEqual(r.returncode, 3, self.output(r))
+        self.assertIn("dev-x", self.output(r))
+        self.assertIn("dev-x2", self.output(r))
+        self.assertEqual([x for x in self.relay.requests if x["method"] == "POST"], [])
+
+    def test_surat_new_unknown_person(self):
+        r = self.run_relay("surat-new", "Crew", "--with", "Nobody")
+        self.assertEqual(r.returncode, 1, self.output(r))
+        self.assertNotIn("Traceback", r.stderr)
+
+    def test_invite_leave_rename_draft(self):
+        self.add_surat()
+        r = self.run_relay("invite", "Tommy", "--to", "Build crew")
+        self.assertEqual(r.returncode, 0, self.output(r))
+        post = self.relay.last_post()
+        self.assertEqual((post["path"], post["body"]), ("/surat/s-1/invite", {"deviceId": "dev-t"}))
+        self.assertIn("Ask the person now", r.stdout)
+        r = self.run_relay("leave", "Build crew")
+        self.assertEqual(self.relay.last_post()["path"], "/surat/s-1/leave")
+        self.assertIn("Ask the person now", r.stdout)
+        r = self.run_relay("rename", "Build crew", "Ship crew")
+        self.assertEqual(r.returncode, 0, self.output(r))
+        post = self.relay.last_post()
+        self.assertEqual((post["path"], post["body"]), ("/surat/s-1/rename", {"name": "Ship crew"}))
+        self.assertIn("Ask the person now", r.stdout)
+
+    def test_drafting_error_codes_are_one_line(self):
+        self.add_surat()
+        self.relay.state["surat_post"] = {"code": 409, "json": {"error": "too_many_members"}}
+        r = self.run_relay("invite", "Tommy", "--to", "Build crew")
+        self.assertEqual(r.returncode, 1, self.output(r))
+        self.assertIn("5", r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+
+    def test_inbox_lists_pending(self):
+        self.relay.state["pending"] = [
+            {"id": "newcomer:s-1:dev-t", "kind": "newcomer", "suratId": "s-1",
+             "suratName": "Build crew", "deviceId": "dev-t", "personName": "Tommy",
+             "deviceName": "Tommy iMac", "inviterName": "Xavier", "declined": False},
+            {"id": "invite:s-2:dev-me", "kind": "invite", "suratId": "s-2",
+             "suratName": "Ops", "deviceId": "dev-me", "personName": "Irfan",
+             "deviceName": "Irfan MacBook", "inviterName": "Xavier", "declined": False}]
+        r = self.run_relay("inbox")
+        self.assertEqual(r.returncode, 0, self.output(r))
+        self.assertIn("newcomer:s-1:dev-t", r.stdout)
+        self.assertIn("Tommy", r.stdout)
+        self.assertIn("Build crew", r.stdout)
+        self.assertIn("invite:s-2:dev-me", r.stdout)
+        self.assertLess(r.stdout.index("Pushed the fix"), r.stdout.index("newcomer:s-1:dev-t"))
+        r = self.run_relay("pending")
+        self.assertEqual(r.returncode, 0, self.output(r))
+        self.assertIn("newcomer:s-1:dev-t", r.stdout)
+
+    def test_decide_posts_approve(self):
+        r = self.run_relay("decide", "newcomer:s-1:dev-t", "approve")
+        self.assertEqual(r.returncode, 0, self.output(r))
+        post = self.relay.last_post()
+        self.assertEqual(post["method"], "POST")
+        self.assertEqual(post["path"].replace("%3A", ":"), "/pending/newcomer:s-1:dev-t/approve")
+        self.assertIn("%3A", post["path"])
+        r = self.run_relay("decide", "newcomer:s-1:dev-t", "decline")
+        self.assertTrue(self.relay.last_post()["path"].endswith("/decline"))
+
+    def test_decide_error_codes(self):
+        cases = [(409, "already_approved", "Already"), (404, "unknown_pending", "No pending"),
+                 (403, "not_allowed", "ended")]
+        for code, err, word in cases:
+            self.relay.state["decide"] = {"code": code, "json": {"error": err}}
+            r = self.run_relay("decide", "newcomer:s-1:dev-t", "approve")
+            self.assertEqual(r.returncode, 1, self.output(r))
+            self.assertIn(word, r.stderr)
+            self.assertNotIn("Traceback", r.stderr)
+
+    def test_read_prints_event_and_locked_rows(self):
+        self.add_surat(unread=3)
+        self.relay.state["messages"]["s-1"]["messages"] = [
+            {"id": "e-1", "kind": "event", "from": {"deviceId": "dev-x", "personName": "Xavier"},
+             "sentAt": 1763600000000, "body": "Xavier added Tommy", "status": "unread"},
+            {"id": "m-9", "kind": "message", "from": {"deviceId": "dev-t", "personName": "Tommy"},
+             "sentAt": 1763600100000, "body": None, "status": "locked",
+             "lockedReason": "they_have_not_approved_you"},
+            {"id": "m-10", "kind": "message", "from": {"deviceId": "dev-x", "personName": "Xavier"},
+             "sentAt": 1763600200000, "body": None, "status": "locked",
+             "lockedReason": "you_have_not_approved_them"}]
+        r = self.run_relay("read", "Build crew", "--all")
+        self.assertEqual(r.returncode, 0, self.output(r))
+        self.assertIn("· Xavier added Tommy", r.stdout)
+        self.assertIn("[locked — Tommy hasn't approved you]", r.stdout)
+        self.assertIn("[locked — Xavier hasn't been approved by you]", r.stdout)
+        self.assertIn("(surat)", r.stdout)
+
+    def test_ambiguous_surat_name_exits_3(self):
+        self.add_surat()
+        self.add_surat(id="s-2")
+        r = self.run_relay("send", "build crew", stdin="x")
+        self.assertEqual(r.returncode, 3, self.output(r))
+        self.assertIn("s-1", self.output(r))
+        self.assertIn("s-2", self.output(r))
+        self.assertEqual([x for x in self.relay.requests if x["method"] == "POST"], [])
+
+    def test_channels_lists_surat_members(self):
+        self.add_surat(members=[{"deviceId": "dev-x", "personName": "Xavier"}], pending=1)
+        r = self.run_relay("channels")
+        self.assertIn("Build crew — surat", r.stdout)
+        self.assertIn("→ s-1", r.stdout)
 
 
 if __name__ == "__main__":

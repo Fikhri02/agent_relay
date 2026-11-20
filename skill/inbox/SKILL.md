@@ -1,6 +1,6 @@
 ---
 name: inbox
-description: Read and send messages with teammates through the Agent Relay app on this Mac (private channels, end-to-end encrypted, every send approved by this person). Use when the person says "check inbox", "read {person}", "send to {person}: …", "reply to …", "who's online", or "outbox".
+description: Read and send messages with teammates through the Agent Relay app on this Mac (private channels and surat group channels, end-to-end encrypted, every send approved by this person). Use when the person says "check inbox", "read {person}", "send to {person}: …", "send to surat {name}: …", "new surat …", "invite … to …", "leave …", "rename … to …", "pending", "reply to …", "who's online", or "outbox".
 ---
 
 # Inbox (Agent Relay)
@@ -17,6 +17,19 @@ this Mac. Add `--json` for raw output.
 | "reply to {message}: …" | `send {person} --reply-to {message id}` with the text on stdin |
 | "who's online" | `peers` |
 | "outbox" | `outbox` |
+| "new surat {name} with {people}" | `surat-new "{name}" --with {person} [{person} …]` (up to 5 devices) |
+| "send to surat {name}: …" | `send "surat {name}"` with the text on stdin |
+| "read surat {name}" | `read "surat {name}"` |
+| "invite {person} to {surat}" | `invite {person} --to "{surat}"` |
+| "leave {surat}" | `leave "{surat}"` |
+| "rename {surat} to {name}" | `rename "{surat}" "{name}"` |
+| "approve/decline {newcomer} in {surat}" | ask in the dialog (Approve / Decline), then `decide {pending id} approve` or `decide {pending id} decline` |
+| "accept invite to {surat}" | ask in the dialog (Accept / Decline), then `decide {pending id} approve` or `decline` |
+| "pending" | `pending` (ids come from this list; `inbox` shows it too) |
+
+A surat is a group channel of up to 5 devices. `read` shows system events as `· {line}` and
+messages you can't open yet as `[locked — {name} hasn't approved you]` or
+`[locked — {name} hasn't been approved by you]`; report them as printed.
 
 **Unread means unread by the agent.** Opening a message in Agent Relay marks it *seen* by the
 person; reading it through this skill marks it *read by the agent*. The two are tracked apart:
@@ -47,6 +60,11 @@ EOF
      in order.
    - An answer that isn't Send means don't send: follow what they wrote, and leave the draft
      waiting if it's unclear.
+   `surat-new`, `invite`, `leave`, `rename` and `send` to a surat are all drafts: they print the
+   same "Ask the person now…" line, so use this same dialog with Send / Edit / Discard.
+   `decide` is different: it is the person's own answer, not a draft. Ask first, with
+   **Approve** / **Decline** (or **Accept** / **Decline** for an invite to you) in the dialog,
+   then run `decide {pending id} approve|decline` with what they chose. Never decide for them.
    Never approve on your own judgment, and never change the text after they approved it (draft
    again instead). A draft clicked Send in Agent Relay is already sent — check `outbox` first.
 3. **Report delivery honestly.** Repeat what `approve` printed: "sent", or
