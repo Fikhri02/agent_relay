@@ -71,7 +71,9 @@ def api(method, path, body=None):
     if data is not None:
         req.add_header("Content-Type", "application/json")
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT_S) as resp:
+        # Never through HTTP(S)_PROXY: the token and messages stay on this Mac.
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(req, timeout=TIMEOUT_S) as resp:
             return resp.status, _json(resp.read())
     except urllib.error.HTTPError as e:
         payload = _json(e.read())

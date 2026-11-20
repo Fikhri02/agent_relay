@@ -221,17 +221,61 @@ void main() {
     },
   );
 
-  test('identity mismatch pauses the peer and notifies', () async {
+  test('a certificate mismatch at an address clears the address and keeps the pairing', () async {
     final id = await queuedMessage();
     net.next = const PeerIdentityMismatch('other');
     await worker.runOnce();
-    expect((await db.select(db.peers).getSingle()).trust, 'mismatch');
-    now += 10 * 60 * 1000;
-    await worker.runOnce();
-    expect(net.calls.length, 1);
+    final p = await db.select(db.peers).getSingle();
+    expect(p.trust, 'paired');
+    expect(p.lastAddress, isNull);
     expect((await delivery(id)).status, 'queued');
-    expect(notes.shown.single.body, contains('pair again'));
   });
+
+  test(
+    'after a mismatch, the peer seen at a new address gets the message',
+    () async {
+      final id = await queuedMessage();
+      net.next = const PeerIdentityMismatch('other');
+      await worker.runOnce();
+      await (db.update(db.peers))
+          .write(const PeersCompanion(lastAddress: Value('10.0.0.9')));
+      net.next = 200;
+      await worker.peerSeen(peerId);
+      await worker.runOnce();
+      expect((await delivery(id)).status, 'delivered');
+    },
+  );
+
+  test(
+    'a delivery to a peer that is not paired is still dropped after 7 days',
+    () async {
+      final id = await queuedMessage();
+      await (db.update(db.peers))
+          .write(const PeersCompanion(trust: Value('unpaired')));
+      now += 7 * 24 * 3600 * 1000 + 1;
+      await worker.runOnce();
+      expect((await delivery(id)).status, 'dropped');
+    },
+  );
+
+  test(
+    'an unreachable peer is tried once per pass; its other items wait',
+    () async {
+      final ids = [
+        await queuedMessage('1'),
+        await queuedMessage('2'),
+        await queuedMessage('3'),
+      ];
+      net.next = const PeerUnreachable('down');
+      await worker.runOnce();
+      expect(net.calls.length, 1);
+      for (final id in ids) {
+        final d = await delivery(id);
+        expect(d.status, 'queued');
+        expect(d.nextAttemptAt, greaterThan(now));
+      }
+    },
+  );
 
   test('401 untrusted unpairs the peer and drops its queue', () async {
     final id = await queuedMessage();

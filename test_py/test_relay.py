@@ -156,8 +156,9 @@ class RelayScriptTest(unittest.TestCase):
         with open(os.path.join(self.home, "local-token"), "w") as f:
             f.write(token + "\n")
 
-    def run_relay(self, *args, stdin="", cwd=None):
+    def run_relay(self, *args, stdin="", cwd=None, env_extra=None):
         env = dict(os.environ)
+        env.update(env_extra or {})
         env["AGENT_RELAY_HOME"] = self.home
         env["AGENT_RELAY_LOCAL_PORT"] = str(self.port)
         return subprocess.run(
@@ -244,6 +245,10 @@ class RelayScriptTest(unittest.TestCase):
         self.assertFalse(any(p.startswith("/channels/ch-t/") for p in self.relay.paths()))
 
     # --- more coverage --------------------------------------------------------
+
+    def test_proxy_env_is_ignored_for_localhost(self):
+        r = self.run_relay("status", env_extra={"HTTP_PROXY": "http://127.0.0.1:9", "http_proxy": "http://127.0.0.1:9", "NO_PROXY": "", "no_proxy": ""})
+        self.assertEqual(r.returncode, 0, self.output(r))
 
     def test_token_sent_as_bearer(self):
         self.run_relay("status")

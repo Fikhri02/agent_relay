@@ -33,6 +33,7 @@ class PeerServer {
     final router = Router()
       ..get('/health', (Request _) => _json(200, {'ok': true}))
       ..post('/pair/hello', _hello)
+      ..post('/pair/reveal', _reveal)
       ..post('/pair/confirm', _confirm)
       ..post('/pair/unpair', _unpair);
     for (final entry in paired.entries) {
@@ -46,7 +47,10 @@ class PeerServer {
         .addMiddleware(
           peerAuthMiddleware(
             db: db,
-            allowUnpaired: (p) => p == '/pair/hello' || p == '/pair/confirm',
+            allowUnpaired: (p) =>
+                p == '/pair/hello' ||
+                p == '/pair/reveal' ||
+                p == '/pair/confirm',
             nowMs: nowMs,
             onPeerSeen: onPeerSeen,
           ),
@@ -54,19 +58,48 @@ class PeerServer {
         .addHandler(router.call);
   }
 
+  Future<Map<String, dynamic>?> _body(Request r) async {
+    try {
+      return (jsonDecode(await r.readAsString()) as Map)
+          .cast<String, dynamic>();
+    } on Object {
+      return null;
+    }
+  }
+
   Future<Response> _hello(Request r) async {
-    final body = jsonDecode(await r.readAsString()) as Map<String, dynamic>;
+    final body = await _body(r);
+    if (body == null) return _json(400, {'error': 'bad_hello'});
     final conn = r.context['shelf.io.connection_info'] as HttpConnectionInfo?;
-    final reply = await pairing.handleHello(
+    final (status, reply) = await pairing.handleHello(
       body,
       conn?.remoteAddress.address ?? '127.0.0.1',
     );
-    if (reply == null) return _json(403, {'error': 'pairing_closed'});
-    return _json(200, reply);
+    return _json(status, reply);
+  }
+
+  Future<Response> _reveal(Request r) async {
+    final body = await _body(r);
+    final signPub = r.context[unpairedSignPubKey] as List<int>?;
+    if (body == null ||
+        signPub == null ||
+        body['nonce'] is! String ||
+        body['deviceId'] is! String) {
+      return _json(400, {'error': 'bad_reveal'});
+    }
+    final ok = await pairing.handleReveal(
+      body['deviceId'] as String,
+      signPub,
+      base64.decode(body['nonce'] as String),
+    );
+    return ok ? _json(200, {'ok': true}) : _json(403, {'error': 'no_pairing'});
   }
 
   Future<Response> _confirm(Request r) async {
-    final body = jsonDecode(await r.readAsString()) as Map<String, dynamic>;
+    final body = await _body(r);
+    if (body == null || body['deviceId'] is! String) {
+      return _json(400, {'error': 'bad_confirm'});
+    }
     final signPub =
         (r.context[unpairedSignPubKey] as List<int>?) ??
         (r.context[peerContextKey] as Peer?)?.signPub;

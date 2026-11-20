@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../data/relay_database.dart';
+import '../discovery/discovery_service.dart' show splitAdvertisedName;
 import '../messaging/message_service.dart';
 import '../node/notifier.dart';
 import '../node/relay_node.dart';
@@ -54,10 +55,11 @@ class AppController extends ChangeNotifier {
     if (d != null) {
       _subs.add(
         d.found.listen((mac) {
+          final (person, device) = splitAdvertisedName(mac.name);
           discovered[mac.deviceId] = ui.DiscoveredMac(
             id: mac.deviceId,
-            personName: mac.name,
-            deviceName: mac.name,
+            personName: person,
+            deviceName: device,
             address: '${mac.host}:${mac.port}',
           );
           notifyListeners();

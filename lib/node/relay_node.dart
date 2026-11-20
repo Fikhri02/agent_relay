@@ -163,6 +163,7 @@ class RelayNode {
         myDeviceId: me.deviceId,
         port: peerPort,
         onPeerSeen: worker.peerSeen,
+        name: advertisedName(me.personName, me.deviceName),
       );
       await discovery!.start();
     }

@@ -66,15 +66,20 @@ class _Pending {
     required this.fingerprint,
     required this.host,
     required this.port,
-    required this.code,
+    required this.myNonce,
     required this.createdAt,
+    this.theirNonce,
+    this.theirCommit,
   });
   final Map<String, dynamic> info;
   final String fingerprint; // the other Mac's certificate, pinned on success
   final String host;
   final int port;
-  final String code;
+  final List<int> myNonce;
   final DateTime createdAt;
+  List<int>? theirNonce;
+  final String? theirCommit;
+  String? code; // set once both nonces are known
   bool localConfirmed = false;
   bool remoteConfirmed = false;
 
@@ -83,7 +88,7 @@ class _Pending {
     deviceId: deviceId,
     personName: info['personName'] as String,
     deviceName: info['deviceName'] as String,
-    code: code,
+    code: code!,
   );
 }
 
@@ -132,20 +137,22 @@ class PairingService {
     ...base64.decode(info['boxPub'] as String),
   ];
 
-  String _codeWith(Map<String, dynamic> other, String otherFp) =>
-      comparisonCode(
-        fpA: me.certFingerprint,
-        fpB: otherFp,
-        keysA: [...me.keys.signPub, ...me.keys.boxPub],
-        keysB: _keysOf(other),
-      );
+  String _codeFor(_Pending p) => comparisonCode(
+    fpA: me.certFingerprint,
+    fpB: p.fingerprint,
+    keysA: [...me.keys.signPub, ...me.keys.boxPub],
+    keysB: _keysOf(p.info),
+    nonceA: p.myNonce,
+    nonceB: p.theirNonce!,
+  );
 
-  /// Initiator side: reach the other Mac (its window must be open).
+  /// Initiator side: hello with a commitment, then reveal the nonce.
   Future<PendingPair> connect(PeerTarget t) async {
+    final myNonce = newNonce();
     final res = await client.post(
       (host: t.host, port: t.port, pinnedFingerprint: null),
       '/pair/hello',
-      _myInfo,
+      {..._myInfo, 'commit': commitmentOf(myNonce)},
     );
     if (res.status != 200) {
       throw PairingRejected(
@@ -160,63 +167,137 @@ class PairingService {
         info['deviceId']) {
       throw const PairingRejected('device id does not match its keys');
     }
-    final fp = res.presentedFingerprint!;
     final p = _Pending(
       info: info,
-      fingerprint: fp,
+      fingerprint: res.presentedFingerprint!,
       host: t.host,
       port: t.port,
-      code: _codeWith(info, fp),
+      myNonce: myNonce,
+      theirNonce: base64.decode(info['nonce'] as String),
       createdAt: _now(),
     );
+    final reveal = await client.post(
+      (host: t.host, port: t.port, pinnedFingerprint: p.fingerprint),
+      '/pair/reveal',
+      {
+        'deviceId': me.deviceId,
+        'signPub': base64.encode(me.keys.signPub),
+        'nonce': base64.encode(myNonce),
+      },
+    );
+    if (reveal.status != 200) {
+      throw PairingRejected(
+        reveal.json['error'] as String? ?? 'status ${reveal.status}',
+      );
+    }
+    p.code = _codeFor(p);
     _pending[p.deviceId] = p;
     _events.add(PairingCodeShown(p.view));
     return p.view;
   }
 
-  /// Responder side of `/pair/hello`. Returns this Mac's info, or null when
-  /// the window is closed.
-  Future<Map<String, dynamic>?> handleHello(
+  /// Responder side of `/pair/hello`: (status, body). 403 when the window is
+  /// closed, 409 when another pairing was already in progress (both are then
+  /// abandoned: two Macs at once is how an attacker would slip in).
+  Future<(int, Map<String, dynamic>)> handleHello(
     Map<String, dynamic> body,
     String remoteHost,
   ) async {
-    if (!window.isOpen) return null;
-    final keysMatch =
-        deviceIdFor(
-          base64.decode(body['signPub'] as String),
-          base64.decode(body['boxPub'] as String),
-        ) ==
-        body['deviceId'];
-    if (!keysMatch) return null;
-    final fp = body['certFingerprint'] as String;
+    if (!window.isOpen) {
+      return (403, <String, dynamic>{'error': 'pairing_closed'});
+    }
+    final List<int> signPub, boxPub;
+    final String fp, commit;
+    final int port;
+    try {
+      signPub = base64.decode(body['signPub'] as String);
+      boxPub = base64.decode(body['boxPub'] as String);
+      fp = body['certFingerprint'] as String;
+      commit = body['commit'] as String;
+      port = body['port'] as int;
+      body['personName'] as String;
+      body['deviceName'] as String;
+    } on Object {
+      return (400, <String, dynamic>{'error': 'bad_hello'});
+    }
+    if (deviceIdFor(signPub, boxPub) != body['deviceId']) {
+      return (400, <String, dynamic>{'error': 'bad_hello'});
+    }
+    final live = _pending.keys.where((id) => _live(id) != null).toList();
+    if (live.isNotEmpty) {
+      for (final id in live) {
+        _pending.remove(id);
+        _events.add(
+          PairingFailed(
+            id,
+            'Another Mac tried to pair at the same time. Start again.',
+          ),
+        );
+      }
+      return (409, <String, dynamic>{'error': 'pairing_busy'});
+    }
     final p = _Pending(
       info: body,
       fingerprint: fp,
       host: remoteHost,
-      port: body['port'] as int,
-      code: _codeWith(body, fp),
+      port: port,
+      myNonce: newNonce(),
+      theirCommit: commit,
       createdAt: _now(),
     );
     _pending[p.deviceId] = p;
+    return (
+      200,
+      <String, dynamic>{..._myInfo, 'nonce': base64.encode(p.myNonce)},
+    );
+  }
+
+  /// `/pair/reveal`: the initiator's nonce, checked against its commitment.
+  /// Only now is the code shown here.
+  Future<bool> handleReveal(
+    String deviceId,
+    List<int> signPub,
+    List<int> nonce,
+  ) async {
+    final p = _live(deviceId);
+    if (p == null || p.theirCommit == null || p.code != null) return false;
+    if (base64.encode(signPub) != p.info['signPub']) return false;
+    if (commitmentOf(nonce) != p.theirCommit) {
+      _pending.remove(deviceId);
+      _events.add(
+        PairingFailed(deviceId, 'Pairing check failed. Start again.'),
+      );
+      return false;
+    }
+    p.theirNonce = nonce;
+    p.code = _codeFor(p);
     _events.add(PairingCodeShown(p.view));
-    return _myInfo;
+    return true;
   }
 
   /// This person says the codes match.
   Future<void> confirm(String deviceId) async {
     final p = _live(deviceId);
-    if (p == null) throw const PairingRejected('no pairing in progress');
+    if (p == null || p.code == null) {
+      throw const PairingRejected('no pairing in progress');
+    }
     p.localConfirmed = true;
     try {
-      await client.post(
+      final res = await client.post(
         (host: p.host, port: p.port, pinnedFingerprint: p.fingerprint),
         '/pair/confirm',
         {'deviceId': me.deviceId, 'signPub': base64.encode(me.keys.signPub)},
       );
+      if (res.status != 200) {
+        throw PairingRejected(
+          res.json['error'] as String? ?? 'status ${res.status}',
+        );
+      }
     } on Object catch (e) {
       _pending.remove(deviceId);
       _events.add(PairingFailed(deviceId, '$e'));
-      rethrow;
+      if (e is PairingRejected) rethrow;
+      throw PairingRejected('$e');
     }
     await _maybeComplete(p);
   }
@@ -225,7 +306,7 @@ class PairingService {
   /// or the signing key differs from the one given in hello.
   Future<bool> handleConfirm(String deviceId, List<int> signPub) async {
     final p = _live(deviceId);
-    if (p == null) return false;
+    if (p == null || p.code == null) return false;
     if (base64.encode(signPub) != p.info['signPub']) return false;
     p.remoteConfirmed = true;
     await _maybeComplete(p);

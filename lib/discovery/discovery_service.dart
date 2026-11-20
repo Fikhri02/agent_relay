@@ -9,6 +9,17 @@ typedef DiscoveredMac = ({String deviceId, String name, String host, int port});
 
 const serviceType = '_agentrelay._tcp';
 
+/// The Bonjour name, so the pairing list can tell Macs apart.
+String advertisedName(String personName, String deviceName) =>
+    '$personName ($deviceName)';
+
+/// Splits [advertisedName] back into (person, device); the whole name is
+/// both when it has no device part.
+(String, String) splitAdvertisedName(String name) {
+  final m = RegExp(r'^(.*) \((.*)\)$').firstMatch(name);
+  return m == null ? (name, name) : (m.group(1)!, m.group(2)!);
+}
+
 /// Advertises this Mac and browses for others. A known peer found on the
 /// network gets its address refreshed and its queue woken; every other Mac is
 /// offered to the pairing screen.

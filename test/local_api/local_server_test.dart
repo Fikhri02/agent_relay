@@ -231,7 +231,7 @@ void main() {
       'kind': 'message',
       'from': xavierId,
       'sentAt': now,
-      'hlc': '9999999999999-00000',
+      'hlc': '${now + 30000}-00000',
       'seq': 2,
       'sealed': {
         'eph': base64.encode(sealedFor.boxPub),

@@ -317,4 +317,58 @@ void main() {
       );
     });
   });
+
+  test('an envelope stamped more than 60 s in the future is refused and does not jam the clock', () async {
+    final d = await alice.svc.draft(channelId: ch, body: 'x');
+    await alice.svc.approve(d.id);
+    final json = (await queued(alice, bob)).single.$2;
+    json['hlc'] = '9999999999999-99999';
+    final from = await bob.peer(alice.id);
+    await expectLater(
+      bob.svc.receive(Envelope.fromJson(json), from: from),
+      throwsA(isA<BadEnvelope>()),
+    );
+    final mine = await bob.svc.draft(channelId: ch, body: 'still works');
+    expect((await bob.svc.approve(mine.id)).status, 'queued');
+  });
+
+  test('a malformed stamp is a BadEnvelope', () async {
+    final d = await alice.svc.draft(channelId: ch, body: 'x');
+    await alice.svc.approve(d.id);
+    final json = (await queued(alice, bob)).single.$2;
+    json['hlc'] = 'nonsense';
+    final from = await bob.peer(alice.id);
+    await expectLater(
+      bob.svc.receive(Envelope.fromJson(json), from: from),
+      throwsA(isA<BadEnvelope>()),
+    );
+  });
+
+  test(
+    'two approvals at once queue one delivery and keep sequence numbers whole',
+    () async {
+      final d = await alice.svc.draft(channelId: ch, body: 'once');
+      await Future.wait([alice.svc.approve(d.id), alice.svc.approve(d.id)]);
+      expect((await queued(alice, bob)).length, 1);
+      final first = await (alice.db.select(
+        alice.db.messages,
+      )..where((m) => m.id.equals(d.id))).getSingle();
+      expect(first.seq, 1);
+      final d2 = await alice.svc.draft(channelId: ch, body: 'next');
+      expect((await alice.svc.approve(d2.id)).seq, 2);
+      final sent = (await queued(alice, bob)).map((q) => q.$2['seq']).toList()
+        ..sort();
+      expect(sent, [1, 2]);
+    },
+  );
+
+  test(
+    'approving a draft older than 1 hour expires it instead of sending',
+    () async {
+      final d = await alice.svc.draft(channelId: ch, body: 'old');
+      aliceNow += 60 * 60 * 1000 + 1;
+      expect((await alice.svc.approve(d.id)).status, 'expired');
+      expect(await queued(alice, bob), isEmpty);
+    },
+  );
 }

@@ -80,4 +80,19 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     expect(count, 0);
   });
+
+  test('advertised name tells Macs apart', () {
+    expect(
+      advertisedName('Xavier', "Xavier's MacBook Pro"),
+      "Xavier (Xavier's MacBook Pro)",
+    );
+  });
+
+  test('advertised name splits back into person and device', () {
+    expect(splitAdvertisedName("Xavier (Xavier's MacBook Pro)"), (
+      'Xavier',
+      "Xavier's MacBook Pro",
+    ));
+    expect(splitAdvertisedName('Agent Relay'), ('Agent Relay', 'Agent Relay'));
+  });
 }

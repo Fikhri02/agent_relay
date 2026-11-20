@@ -8,7 +8,6 @@ import '../node/notifier.dart';
 import '../peer/peer_client.dart';
 import 'message_service.dart';
 
-const draftLifetimeMs = 60 * 60 * 1000;
 const queueLifetimeMs = 7 * 24 * 60 * 60 * 1000;
 const _backoffMs = [5000, 30000, 120000, 300000];
 
@@ -78,15 +77,38 @@ class DeliveryWorker {
     final peers = {
       for (final p in await db.select(db.peers).get()) p.deviceId: p,
     };
+    final unreachable = <String>{};
     for (final d in await db.dueDeliveries(_now())) {
+      if (await _dropIfTooOld(d, peers[d.recipientDeviceId])) continue;
       final peer = peers[d.recipientDeviceId];
       if (peer == null || peer.trust != 'paired') continue;
-      await _attempt(d, peer);
-      // A peer may change state (unpaired, mismatch) mid-run.
+      if (unreachable.contains(peer.deviceId)) {
+        // Already failed this pass: don't wait out another timeout.
+        await _retry(d, 'peer unreachable');
+        continue;
+      }
+      if (!await _attempt(d, peer)) unreachable.add(peer.deviceId);
+      // A peer may change state (unpaired, address cleared) mid-run.
       peers[peer.deviceId] = await (db.select(
         db.peers,
       )..where((p) => p.deviceId.equals(peer.deviceId))).getSingle();
     }
+  }
+
+  /// Runs before any trust check, so nothing waits forever for a peer that
+  /// is unpaired or changed.
+  Future<bool> _dropIfTooOld(Delivery d, Peer? peer) async {
+    if (_now() - d.createdAt <= queueLifetimeMs) return false;
+    await _set(d, status: 'dropped', error: 'older than 7 days');
+    if (!d.messageId.startsWith('receipt:')) {
+      await notifier.show(
+        NotificationText(
+          "Couldn't deliver to ${peer?.personName ?? 'a teammate'}",
+          'The message waited 7 days for their Mac and was dropped.',
+        ),
+      );
+    }
+    return true;
   }
 
   Future<void> _expireDrafts() async {
@@ -100,24 +122,11 @@ class DeliveryWorker {
         .write(const MessagesCompanion(status: Value('expired')));
   }
 
-  Future<void> _attempt(Delivery d, Peer peer) async {
-    final now = _now();
-    final isReceipt = d.messageId.startsWith('receipt:');
-    if (now - d.createdAt > queueLifetimeMs) {
-      await _set(d, status: 'dropped', error: 'older than 7 days');
-      if (!isReceipt) {
-        await notifier.show(
-          NotificationText(
-            "Couldn't deliver to ${peer.personName}",
-            'The message waited 7 days for their Mac and was dropped.',
-          ),
-        );
-      }
-      return;
-    }
+  /// One try. False when the peer could not be reached at all.
+  Future<bool> _attempt(Delivery d, Peer peer) async {
     if (peer.lastAddress == null || peer.lastPort == null) {
       await _retry(d, 'no known address');
-      return;
+      return false;
     }
     final env = jsonDecode(d.envelopeJson) as Map<String, dynamic>;
     try {
@@ -176,17 +185,17 @@ class DeliveryWorker {
         );
       }
     } on PeerIdentityMismatch {
-      await _peer(peer, const PeersCompanion(trust: Value('mismatch')));
-      await _retry(d, 'identity changed');
-      await notifier.show(
-        NotificationText(
-          '${peer.personName}\'s Mac changed',
-          "Its identity changed — pair again before sending more.",
-        ),
-      );
+      // Another Mac answers at this address now (a reused IP or a false
+      // advert). The pairing is fine; forget the address until the peer is
+      // seen again by mDNS or by its own signed request.
+      await _peer(peer, const PeersCompanion(lastAddress: Value(null)));
+      await _retry(d, 'a different Mac answered at ${peer.lastAddress}');
+      return false;
     } on PeerUnreachable catch (e) {
       await _retry(d, '$e');
+      return false;
     }
+    return true;
   }
 
   Future<void> _retry(Delivery d, String error) async {

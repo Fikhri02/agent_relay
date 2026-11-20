@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:drift/drift.dart';
 import 'package:shelf/shelf.dart';
@@ -9,6 +10,10 @@ import '../data/relay_database.dart';
 
 const _publicPaths = {'/health'};
 const signatureWindowMs = 30000;
+
+/// Largest request body a peer may send (a 32 KB message sealed and
+/// JSON-escaped stays well under this).
+const maxPeerBodyBytes = 512 * 1024;
 
 /// Context key holding the verified [Peer] for a paired request.
 const peerContextKey = 'peer';
@@ -42,7 +47,14 @@ Middleware peerAuthMiddleware({
       return _deny('clock_skew', {'serverTimeMs': now});
     }
 
-    final body = await request.read().expand((c) => c).toList();
+    final declared = request.contentLength;
+    if (declared != null && declared > maxPeerBodyBytes) return _tooLarge();
+    final builder = BytesBuilder(copy: false);
+    await for (final chunk in request.read()) {
+      builder.add(chunk);
+      if (builder.length > maxPeerBodyBytes) return _tooLarge();
+    }
+    final body = builder.takeBytes();
     final signed = signingString(
       method: request.method,
       path: path,
@@ -102,6 +114,12 @@ Middleware peerAuthMiddleware({
     );
   };
 }
+
+Response _tooLarge() => Response(
+  413,
+  body: jsonEncode({'error': 'too_large', 'limit': maxPeerBodyBytes}),
+  headers: {'content-type': 'application/json'},
+);
 
 Response _deny(String error, [Map<String, Object> extra = const {}]) =>
     Response(

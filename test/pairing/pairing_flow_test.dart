@@ -106,4 +106,43 @@ void main() {
       );
     }
   });
+
+  test('a second hello while a pairing is pending aborts both', () async {
+    final c = await TestNode.start('tommy', clock: () => now);
+    addTearDown(c.stop);
+    a.window.open();
+    b.window.open();
+    c.window.open();
+    await b.pairing.connect(a.target);
+    final failed = a.pairing.events.firstWhere((e) => e is PairingFailed);
+    await expectLater(
+      c.pairing.connect(a.target),
+      throwsA(isA<PairingRejected>()),
+    );
+    await failed.timeout(const Duration(seconds: 5));
+    await expectLater(
+      a.pairing.confirm(b.me.deviceId),
+      throwsA(isA<PairingRejected>()),
+    );
+  });
+
+  test('confirm fails when the other side has no such pairing', () async {
+    a.window.open();
+    b.window.open();
+    await b.pairing.connect(a.target);
+    a.pairing.cancel(b.me.deviceId);
+    await expectLater(
+      b.pairing.confirm(a.me.deviceId),
+      throwsA(isA<PairingRejected>()),
+    );
+    expect(await b.db.select(b.db.peers).get(), isEmpty);
+  });
+
+  test('the code is only shown on the responder after the initiator reveals its nonce', () async {
+    a.window.open();
+    b.window.open();
+    final shown = codeShownOn(a);
+    final pending = await b.pairing.connect(a.target);
+    expect(await shown.timeout(const Duration(seconds: 5)), pending.code);
+  });
 }

@@ -149,4 +149,11 @@ void main() {
     final body = jsonEncode({'signPub': base64.encode(xavier.signPub)});
     expect((await handler(await signed(xavier, body: body))).statusCode, 401);
   });
+
+  test('a body over 512 KB is refused with 413 before it is read', () async {
+    await insertPeer(db, xavier);
+    final big = 'x' * (512 * 1024 + 1);
+    final res = await handler(await signed(xavier, body: big));
+    expect(res.statusCode, 413);
+  });
 }

@@ -32,6 +32,18 @@ class NotAMember implements Exception {
   const NotAMember();
 }
 
+/// An envelope this Mac refuses: malformed, or stamped too far ahead.
+class BadEnvelope implements Exception {
+  const BadEnvelope(this.reason);
+  final String reason;
+  @override
+  String toString() => 'bad envelope: $reason';
+}
+
+/// How far ahead of this Mac's clock a peer's stamp may be.
+const maxFutureSkewMs = 60000;
+const draftLifetimeMs = 60 * 60 * 1000;
+
 typedef ReceiveResult = ({bool duplicate, Message message});
 
 /// Who read a message: the person in the app, or their agent via the API.
@@ -107,22 +119,30 @@ class MessageService {
     return m;
   }
 
+  /// Seals and queues a draft. Safe to call twice at once: only the first
+  /// call sends. A draft older than 1 hour expires instead.
   Future<Message> approve(String messageId) async {
-    final m = await _get(messageId);
-    if (m.status != 'awaiting_approval') return m;
-    final now = _now();
-    final hlc = clock.tick().encode();
-    final seq = await db.nextSeq(m.channelId, myDeviceId);
-    final recipients = await _pairedRecipients(m.channelId);
-    final plain = utf8.encode(
-      jsonEncode({
-        'body': m.body,
-        if (m.contextJson != null) 'context': jsonDecode(m.contextJson!),
-      }),
-    );
-    await db.transaction(() async {
+    final changed = await db.transaction(() async {
+      final m = await _get(messageId);
+      if (m.status != 'awaiting_approval') return false;
+      final now = _now();
+      if (now - m.createdAt > draftLifetimeMs) {
+        await (db.update(db.messages)..where((x) => x.id.equals(m.id))).write(
+          const MessagesCompanion(status: Value('expired')),
+        );
+        return true;
+      }
+      final hlc = clock.tick().encode();
+      final seq = await db.nextSeq(m.channelId, myDeviceId);
+      final recipients = await _pairedRecipients(m.channelId);
+      final plain = utf8.encode(
+        jsonEncode({
+          'body': m.body,
+          if (m.contextJson != null) 'context': jsonDecode(m.contextJson!),
+        }),
+      );
       for (final peer in recipients) {
-        final header = Envelope(
+        Envelope env(SealedEnvelope sealed) => Envelope(
           id: m.id,
           channelId: m.channelId,
           kind: m.kind,
@@ -131,25 +151,23 @@ class MessageService {
           hlc: hlc,
           seq: seq,
           replyTo: m.replyTo,
-          sealed: const SealedEnvelope(eph: '', nonce: '', ct: '', mac: ''),
+          sealed: sealed,
         );
+        final aad = env(
+          const SealedEnvelope(eph: '', nonce: '', ct: '', mac: ''),
+        ).aad;
         final sealed = await seal(
           plain,
           recipientBoxPub: peer.boxPub,
-          aad: header.aad,
+          aad: aad,
         );
-        final env = Envelope(
-          id: header.id,
-          channelId: header.channelId,
-          kind: header.kind,
-          from: header.from,
-          sentAt: header.sentAt,
-          hlc: header.hlc,
-          seq: header.seq,
-          replyTo: header.replyTo,
-          sealed: sealed,
+        await _queue(
+          m.id,
+          peer.deviceId,
+          '/relay/deliver',
+          env(sealed).toJson(),
+          now,
         );
-        await _queue(m.id, peer.deviceId, '/relay/deliver', env.toJson(), now);
       }
       await (db.update(db.messages)..where((x) => x.id.equals(m.id))).write(
         MessagesCompanion(
@@ -159,9 +177,10 @@ class MessageService {
           sentAt: Value(now),
         ),
       );
+      return true;
     });
-    final out = await _get(m.id);
-    _changes.add(out);
+    final out = await _get(messageId);
+    if (changed) _changes.add(out);
     return out;
   }
 
@@ -223,7 +242,16 @@ class MessageService {
       throw const NotAMember();
     }
     final now = _now();
-    clock.observe(Hlc.decode(e.hlc));
+    final Hlc stamp;
+    try {
+      stamp = Hlc.decode(e.hlc);
+    } on Object {
+      throw const BadEnvelope('malformed hlc');
+    }
+    if (stamp.wallMs > now + maxFutureSkewMs) {
+      throw const BadEnvelope('stamped too far in the future');
+    }
+    clock.observe(stamp);
     String? body;
     String? contextJson;
     var status = 'unread';
