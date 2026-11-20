@@ -252,9 +252,12 @@ void main() {
     final draftId = await alice.surat.draftRename(mine, 'Road trip');
     await alice.messages.approve(draftId);
     expect((await alice.channel(mine))!.name, 'Road trip');
-    expect(alice.changes.whereType<Renamed>().map((r) => (r.suratId, r.name)), [
-      (mine, 'Road trip'),
-    ]);
+    expect(
+      alice.changes.whereType<Renamed>().map(
+        (r) => (r.suratId, r.name, r.previous),
+      ),
+      [(mine, 'Road trip', 'Trip')],
+    );
   });
 
   test('leave from the last-but-one member ends the surat locally', () async {

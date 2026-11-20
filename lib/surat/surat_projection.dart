@@ -128,7 +128,7 @@ class SuratProjection {
       out.add(Invited(suratId, self.inviter!));
     }
     if (channel.name != null && s.name.isNotEmpty && channel.name != s.name) {
-      out.add(Renamed(suratId, s.name));
+      out.add(Renamed(suratId, s.name, channel.name));
     }
     for (final id in s.members.keys.toList()..sort()) {
       if (id == mine) continue;

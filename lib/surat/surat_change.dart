@@ -43,8 +43,11 @@ class NewcomerToApprove extends SuratChange {
 }
 
 class Renamed extends SuratChange {
-  const Renamed(super.suratId, this.name);
+  const Renamed(super.suratId, this.name, [this.previous]);
   final String name;
+
+  /// The name before this rename.
+  final String? previous;
 }
 
 class Ended extends SuratChange {
