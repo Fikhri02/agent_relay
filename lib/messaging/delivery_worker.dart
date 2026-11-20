@@ -86,7 +86,16 @@ class DeliveryWorker {
     };
     _keepAlive(peers.values);
     final unreachable = <String>{};
-    for (final d in await db.dueDeliveries(_now())) {
+    for (final due in await db.dueDeliveries(_now())) {
+      // An earlier attempt this pass may have dropped or delayed it.
+      final d =
+          await (db.select(db.deliveries)..where(
+                (x) =>
+                    x.messageId.equals(due.messageId) &
+                    x.recipientDeviceId.equals(due.recipientDeviceId),
+              ))
+              .getSingle();
+      if (d.status != 'queued' || d.nextAttemptAt > _now()) continue;
       if (await _dropIfTooOld(d, peers[d.recipientDeviceId])) continue;
       final peer = peers[d.recipientDeviceId];
       if (peer == null || !canTalk(peer)) continue;
@@ -213,15 +222,21 @@ class DeliveryWorker {
         for (final q in queued) {
           if (!keepSurat || await _isPrivate(q)) {
             await _set(q, status: 'dropped', error: 'unpaired');
+          } else {
+            await _retry(q, 'untrusted');
           }
         }
-        await onUnpaired(peer.deviceId);
-        await notifier.show(
-          NotificationText(
-            '${peer.personName} unpaired',
-            'Their Mac no longer accepts messages from this one.',
-          ),
-        );
+        // Only a paired peer is newly unpaired; a contact that answers 401
+        // just backs off.
+        if (peer.trust == 'paired') {
+          await onUnpaired(peer.deviceId);
+          await notifier.show(
+            NotificationText(
+              '${peer.personName} unpaired',
+              'Their Mac no longer accepts messages from this one.',
+            ),
+          );
+        }
       } else if (res.status >= 400 && res.status < 500) {
         await _set(
           d,

@@ -150,6 +150,21 @@ void main() {
     expect((await message(id)).status, 'sent');
   });
 
+  test('a 401 from a peer already a surat contact backs off without calling onUnpaired', () async {
+    await addSurat();
+    final sur = await queuedSuratMessage();
+    await makeContact();
+    net.next = 401;
+    await worker.runOnce();
+    expect(unpaired, isEmpty);
+    expect(notes.shown, isEmpty);
+    expect((await delivery(sur)).status, 'queued');
+    expect((await delivery(sur)).attempts, 1);
+    final posts = net.calls.length;
+    await worker.runOnce();
+    expect(net.calls.length, posts);
+  });
+
   test('worker never sends a private message to a contact', () async {
     final id = await queuedMessage();
     await makeContact();
@@ -164,9 +179,16 @@ void main() {
     final sur = await queuedSuratMessage();
     net.next = 401;
     await worker.runOnce();
-    expect(unpaired, contains(peerId));
+    expect(unpaired, [peerId]);
     expect((await delivery(priv)).status, 'dropped');
     expect((await delivery(sur)).status, 'queued');
+    expect((await delivery(sur)).lastError, 'untrusted');
+    expect(notes.shown, hasLength(1));
+    final posts = net.calls.length;
+    await worker.runOnce(); // same `now`: backing off
+    expect(net.calls.length, posts);
+    expect(unpaired, [peerId]);
+    expect(notes.shown, hasLength(1));
   });
 
   test('posts to the peer address pinned to its fingerprint; 200 marks the message sent', () async {
