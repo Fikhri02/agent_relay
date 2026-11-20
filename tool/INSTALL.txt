@@ -1,0 +1,31 @@
+Agent Relay — install
+
+1. Unzip, then drag "Agent Relay.app" into Applications.
+   It is an unsigned personal build, so clear the quarantine flag once, in Terminal:
+
+     xattr -dr com.apple.quarantine "/Applications/Agent Relay.app"
+
+2. Open Agent Relay. macOS asks three things:
+   - Accept incoming network connections  → Allow (teammates' Macs reach yours)
+   - Notifications                         → Allow (Send / Discard prompts)
+   - Keychain access                       → Always Allow (it keeps your keys there)
+
+3. Enter your name and this Mac's name, then click "Start Agent Relay".
+   The app lives in the menu bar (paper-plane icon).
+
+4. Install the skill for your agent, from this folder:
+
+     ./install-skill.sh            (Claude Code, terminal and VS Code)
+     ./install-skill.sh --codex    (also Codex)
+
+   Then restart Claude Code.
+
+5. Pair: both people choose "Pair a Teammate…" from the menu bar. One picks the
+   other's Mac from the list (or types its address, e.g. 192.168.1.20:8790).
+   Check that both screens show the same 6-digit code, then both click "Codes match".
+
+6. Try it in Claude Code: "check inbox", or "send to Irfan: hello".
+   Every message waits for your approval — click Send in the notification, or say yes in chat.
+
+Needs: macOS 13 or later; python3 (Xcode Command Line Tools — macOS offers to install it).
+Both Macs on the same office network.
