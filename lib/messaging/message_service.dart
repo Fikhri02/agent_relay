@@ -304,6 +304,7 @@ class MessageService {
   }
 
   Future<ReceiveResult> receive(Envelope e, {required Peer from}) async {
+    if (e.kind == 'event') throw const BadEnvelope('events go to /relay/event');
     if (e.from != from.deviceId) throw const NotAMember();
     final channel = await (db.select(
       db.channels,

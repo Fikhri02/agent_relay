@@ -16,6 +16,7 @@ import '../peer/trust.dart';
 import 'surat_change.dart';
 import 'surat_event.dart';
 import 'surat_projection.dart';
+import 'surat_receiver.dart';
 import 'surat_state.dart';
 
 export 'surat_change.dart';
@@ -53,6 +54,14 @@ class SuratService {
     keys: keys,
     nowMs: _now,
     myPort: myPort,
+  );
+  late final _receiver = SuratReceiver(
+    db: db,
+    me: me,
+    keys: keys,
+    clock: clock,
+    nowMs: _now,
+    project: _projectInTransaction,
   );
 
   Stream<SuratChange> get changes => _changes.stream;
@@ -252,15 +261,29 @@ class SuratService {
   /// when there is one) and writes the result into `ChannelMembers` and
   /// `Channels`. Running it twice changes nothing the second time.
   Future<SuratState> rebuild(String suratId) async {
-    final result = await db.transaction(() async {
-      final result = await _projection.project(suratId);
-      if (result.state.members.isNotEmpty) {
-        await forgetLoneContacts(db, me.deviceId);
-      }
-      return result;
-    });
+    final result = await db.transaction(() => _projectInTransaction(suratId));
     result.changes.forEach(_changes.add);
     return result.state;
+  }
+
+  /// A membership event from [from] on [eventPath]: checked, stored once and
+  /// applied through the projection (see [SuratReceiver.receive]). Throws
+  /// [BadEnvelope] or [NotAMember] and stores nothing when refused.
+  Future<({bool duplicate})> receiveEvent(
+    Envelope e, {
+    required Peer from,
+  }) async {
+    final r = await _receiver.receive(e, from: from);
+    r.changes.forEach(_changes.add);
+    return (duplicate: r.duplicate);
+  }
+
+  Future<Projected> _projectInTransaction(String suratId) async {
+    final result = await _projection.project(suratId);
+    if (result.state.members.isNotEmpty) {
+      await forgetLoneContacts(db, me.deviceId);
+    }
+    return result;
   }
 
   Future<MemberCard> _pairedCard(String deviceId) async {

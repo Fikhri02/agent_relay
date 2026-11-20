@@ -158,7 +158,7 @@ class RelayNode {
       handler: PeerServer(
         db: db,
         pairing: pairing,
-        paired: relayRoutes(messages),
+        paired: relayRoutes(messages, surat: surat),
         onPeerSeen: (id) => unawaited(worker.peerSeen(id)),
       ).handler,
     );

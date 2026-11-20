@@ -8,6 +8,7 @@ import '../node/notifier.dart';
 import '../peer/peer_client.dart';
 import 'message_service.dart';
 import '../peer/trust.dart';
+import '../surat/surat_service.dart' show eventPath;
 
 const queueLifetimeMs = 7 * 24 * 60 * 60 * 1000;
 const _backoffMs = [5000, 30000, 120000, 300000];
@@ -44,6 +45,7 @@ class DeliveryWorker {
   final Future<void> Function(List<Message> expired)? onDraftsExpired;
   final int Function() _now;
   final _skewNoticeSent = <String>{};
+  final _tooOldNoticeSent = <String>{};
   Timer? _timer;
   Future<void>? _current;
   bool _again = false;
@@ -256,6 +258,21 @@ class DeliveryWorker {
             ),
           );
         }
+      } else if (env['path'] == eventPath && res.status == 404) {
+        // A 1.0.x build has no event route.
+        await _set(d, status: 'dropped', error: 'too old for surat');
+        if (_tooOldNoticeSent.add(peer.deviceId)) {
+          await notifier.show(
+            NotificationText(
+              "${peer.personName}'s Agent Relay is too old for surat",
+              'ask them to update',
+            ),
+          );
+        }
+      } else if (env['path'] == eventPath && res.status == 403) {
+        // Events from different senders arrive in any order: an accept can
+        // land before the invite that seats its sender. Try again later.
+        await _retry(d, 'not_a_member');
       } else if (res.status >= 400 && res.status < 500) {
         await _set(
           d,

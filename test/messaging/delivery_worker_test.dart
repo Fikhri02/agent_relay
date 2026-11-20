@@ -380,6 +380,74 @@ void main() {
     },
   );
 
+  group('event deliveries', () {
+    Future<void> queueEvent(String id) => db
+        .into(db.deliveries)
+        .insert(
+          DeliveriesCompanion.insert(
+            messageId: id,
+            recipientDeviceId: peerId,
+            envelopeJson: jsonEncode({
+              'path': '/relay/event',
+              'payload': {'id': id},
+            }),
+            status: 'queued',
+            nextAttemptAt: now,
+            createdAt: now,
+          ),
+        );
+
+    test('old peer: 404 on /relay/event drops it and notifies once', () async {
+      await queueEvent('e1');
+      await queueEvent('e2');
+      net.next = 404;
+      await worker.runOnce();
+      expect((await delivery('e1')).status, 'dropped');
+      expect((await delivery('e2')).status, 'dropped');
+      expect(notes.shown.map((n) => n.toString()), [
+        "Xavier's Agent Relay is too old for surat — ask them to update",
+      ]);
+
+      await queueEvent('e3');
+      await worker.runOnce();
+      expect((await delivery('e3')).status, 'dropped');
+      expect(notes.shown, hasLength(1));
+    });
+
+    test('a 404 on /relay/deliver drops without the surat notice', () async {
+      final id = await queuedMessage();
+      net.next = 404;
+      await worker.runOnce();
+      expect((await delivery(id)).status, 'dropped');
+      expect(notes.shown, isEmpty);
+    });
+
+    test(
+      'a 403 on /relay/event backs off and retries: the event may be early',
+      () async {
+        await queueEvent('e1');
+        net.next = 403;
+        await worker.runOnce();
+        final d = await delivery('e1');
+        expect(
+          (d.status, d.attempts, d.nextAttemptAt),
+          ('queued', 1, now + 5000),
+        );
+        now += 5000;
+        net.next = 200;
+        await worker.runOnce();
+        expect((await delivery('e1')).status, 'delivered');
+      },
+    );
+
+    test('a 403 on /relay/deliver still drops', () async {
+      final id = await queuedMessage();
+      net.next = 403;
+      await worker.runOnce();
+      expect((await delivery(id)).status, 'dropped');
+    });
+  });
+
   test('401 untrusted unpairs the peer and drops its queue', () async {
     final id = await queuedMessage();
     net.next = 401;
