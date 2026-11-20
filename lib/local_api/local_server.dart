@@ -12,7 +12,9 @@ import '../messaging/message_service.dart';
 import '../surat/surat_service.dart';
 import 'surat_routes.dart';
 
-const appVersion = '1.0.0';
+/// The app version GET /status reports; keep it equal to pubspec's version
+/// name (a test checks).
+const appVersion = '1.1.0';
 const reachableWithinMs = 120000;
 
 typedef LocalMe = ({String deviceId, String personName, String deviceName});

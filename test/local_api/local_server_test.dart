@@ -142,12 +142,19 @@ void main() {
     expect((await call('GET', '/status', auth: 'Bearer nope')).$1, 401);
   });
 
+  test('appVersion is the pubspec version name', () {
+    final line = File('pubspec.yaml')
+        .readAsLinesSync()
+        .firstWhere((l) => l.startsWith('version: '));
+    expect(appVersion, line.substring('version: '.length).split('+').first);
+  });
+
   test('status and peers', () async {
     expect((await call('GET', '/status')).$2, {
       'deviceId': myId,
       'personName': 'Irfan',
       'deviceName': 'MacBook Pro',
-      'version': '1.0.0',
+      'version': '1.1.0',
     });
     final peers = (await call('GET', '/peers')).$2 as List;
     expect(peers.single['personName'], 'Xavier');
